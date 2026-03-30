@@ -1,27 +1,125 @@
-# EcomBackend
+# 🚀 Universal Backend Engine (Node.js)
 
-This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 16.2.12.
+A scalable, reusable, and modular backend engine built with **Node.js**, designed to power multiple projects with a consistent and clean architecture.
 
-## Development server
+---
 
-Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The application will automatically reload if you change any of the source files.
+## 📌 Overview
 
-## Code scaffolding
+This project provides a **universal backend structure** that can be reused across different applications such as eCommerce, school systems, or any custom platform.
 
-Run `ng generate component component-name` to generate a new component. You can also use `ng generate directive|pipe|service|class|guard|interface|enum|module`.
+It follows a **clean and modular architecture**, making it easy to maintain, extend, and scale.
 
-## Build
+---
 
-Run `ng build` to build the project. The build artifacts will be stored in the `dist/` directory.
+## ✨ Features
 
-## Running unit tests
+* ⚡ Modular architecture (core, modules, platform, projects)
+* 🔐 Authentication & security layer ready
+* 🧩 Reusable components across multiple projects
+* 🗄️ Database support (SQL / Supabase ready)
+* 📦 Config-driven system
+* 🧱 Scalable folder structure
+* 🛠️ Easy to extend and customize
 
-Run `ng test` to execute the unit tests via [Karma](https://karma-runner.github.io).
+---
 
-## Running end-to-end tests
+## 🏗️ Project Structure
 
-Run `ng e2e` to execute the end-to-end tests via a platform of your choice. To use this command, you need to first add a package that implements end-to-end testing capabilities.
+```
+src/
+├── config/        # App configuration & environment
+├── core/          # Core engine logic
+│   ├── auth/      # Authentication system
+│   ├── db/        # Database clients
+│   ├── executor/  # Execution layer
+│   ├── resolver/  # Request handling
+│   ├── security/  # Guards & validation
+│   └── utils/     # Utilities
+├── modules/       # Feature modules (CRUD etc.)
+├── platform/      # Platform-specific procedures
+├── projects/      # Project configurations
+├── types/         # Global TypeScript types
+└── utils/         # Shared utilities
+```
 
-## Further help
+---
 
-To get more help on the Angular CLI use `ng help` or go check out the [Angular CLI Overview and Command Reference](https://angular.io/cli) page.
+## ⚙️ Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/universal-backend-made-using-nodejs.git
+
+# Navigate into project
+cd universal-backend-made-using-nodejs
+
+# Install dependencies
+npm install
+```
+
+---
+
+## ▶️ Usage
+
+```bash
+# Start development server
+npm run dev
+
+# Build project
+npm run build
+
+# Start production
+npm start
+```
+
+---
+
+## 🧠 Architecture Philosophy
+
+This backend follows:
+
+* **Separation of concerns**
+* **Reusable core engine**
+* **Config-driven development**
+* **Scalable project structure**
+
+You can plug in new projects without rewriting backend logic.
+
+---
+
+## 🔧 Customization
+
+* Add new modules in `/modules`
+* Add new project configs in `/projects`
+* Extend core logic inside `/core`
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome!
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -m "feat: add new feature"`)
+4. Push to the branch (`git push origin feature/your-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+## 👨‍💻 Author
+
+**Jibran Khot**
+
+---
+
+## 🌟 Support
+
+If you like this project, give it a ⭐ on GitHub!
