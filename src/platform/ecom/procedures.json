@@ -1,0 +1,19 @@
+{
+  "//": "Ecom project ke saare stored procedures",
+  "//1": "Yeh resolver ko batayega kaunsa procedure kis DB me run hoga",
+
+  "procedures": {
+    "AdminLoginProc": {
+      "db": "MASTER"
+    },
+    "GetDashboardData":{
+      "db": "TENANT"
+    },
+    "GetProducts": {
+      "db": "TENANT"
+    },
+    "CreateOrder": {
+      "db": "TENANT"
+    }
+  }
+}
