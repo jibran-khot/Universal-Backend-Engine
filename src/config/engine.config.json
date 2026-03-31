@@ -1,0 +1,41 @@
+{
+  "//": "Global engine configuration file",
+  "//1": "Yeh engine level config hai — kisi specific project ka nahi",
+  "//2": "Isme engine behaviour, DB strategy aur feature flags define honge",
+
+  "engine": {
+    "name": "sql-backend-engine",
+    "version": "1.0.0",
+    "mode": "sql-first"
+  },
+
+  "database": {
+    "strategy": "multi-tenant",
+    "default": "MASTER",
+
+    "mapping": {
+      "MASTER": {
+        "type": "sql",
+        "envKey": "DB_MASTER_NAME"
+      },
+      "TENANT": {
+        "type": "sql",
+        "envKey": "DB_TENANT_DEFAULT"
+      }
+    }
+  },
+
+  "features": {
+    "auth": true,
+    "logging": true,
+    "rbac": false,
+    "fileUpload": false,
+    "caching": false
+  },
+
+  "execution": {
+    "retryOnFail": false,
+    "timeoutMs": 30000,
+    "datasetNormalization": true
+  }
+}
