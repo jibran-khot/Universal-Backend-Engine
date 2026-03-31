@@ -1,0 +1,13 @@
+{
+  "project": "school",
+  "masterDb": "school_setup",
+  "clientDb": "school_db",
+  "procedures": {
+    "allowed": [
+      "Student_Login",
+      "Student_Register",
+      "Get_Students",
+      "Create_Student"
+    ]
+  }
+}

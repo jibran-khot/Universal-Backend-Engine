@@ -1,0 +1,10 @@
+{
+  "project": "ecom",
+  "masterDb": "EcomSetup",
+  "clientDb": "EcomDB",
+  "procedures": {
+    "allowed": [
+    "AdminLoginProc"
+    ]
+  }
+}
