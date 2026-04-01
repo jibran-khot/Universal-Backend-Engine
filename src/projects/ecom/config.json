@@ -4,7 +4,8 @@
   "clientDb": "EcomDB",
   "procedures": {
     "allowed": [
-    "AdminLoginProc"
+    "AdminLoginProc",
+    "AdminUserSessionProc"
     ]
   }
 }
