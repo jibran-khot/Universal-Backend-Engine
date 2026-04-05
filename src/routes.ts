@@ -1,45 +1,42 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { validateRequest } from "./core/validation/validator";
-import { handleError } from "./core/errors/error.handler";
 import { run } from "./core/run";
 import { authMiddleware } from "./core/auth/auth.middleware";
 
 const router = Router();
 
 /**
- * Health check endpoint.
+ * Async wrapper to forward errors to global handler
  */
-router.get("/health", (_req, res) => {
-    res.json({
-        status: "ok",
-        engine: "hybrid-db-engine",
-        timestamp: Date.now(),
-    });
-});
+const asyncHandler =
+    (fn: Function) =>
+        (req: Request, res: Response, next: NextFunction) =>
+            Promise.resolve(fn(req, res, next)).catch(next);
 
 /**
- * Universal procedure executor endpoint.
- * Flow:
- * route → auth → validator → run() → guard → resolver → executor
+ * Universal procedure executor endpoint
  */
-router.post("/run", authMiddleware, async (req, res) => {
-    try {
+router.post(
+    "/run",
+    authMiddleware,
+    asyncHandler(async (req: Request, res: Response) => {
         const body = validateRequest(req.body);
 
         /**
-         * Pass auth data into engine
+         * Inject auth context
          */
         (body as any).__auth = (req as any).__auth;
         (body as any).__token = (req as any).__token;
 
-        // IMPORTANT: go through engine entry, not executor directly
+        /**
+         * Inject request context (CRITICAL for logging/tracing)
+         */
+        (body as any).__context = (req as any).context;
+
         const result = await run(body);
 
-        res.json(result);
-    } catch (err: any) {
-        const response = handleError(err);
-        res.status(response.status.code).json(response);
-    }
-});
+        res.status(200).json(result);
+    })
+);
 
 export default router;
