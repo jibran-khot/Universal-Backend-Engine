@@ -1,20 +1,26 @@
 /**
- * ============================= DATABASE RESOLVER =============================
+ * ============================================================
+ * DATABASE RESOLVER
+ * ============================================================
  *
- * FINAL ENGINE RESOLVER
+ * Purpose:
+ * - Resolve which database to use for a given request
+ * - Convert EngineRequest → executor-friendly context
  *
- * DB resolution:
- * registry → engine.config → ENV.engineDb
+ * Flow:
+ * run → resolver → executor
  *
- * Context DB dependency removed.
- * Engine fully portable.
- * =============================================================================
+ * DB Resolution Strategy:
+ * 1. procedure.registry → determines DB type (MASTER / TENANT)
+ * 2. engine.config → validates mapping
+ * 3. ENV → resolves actual database name
  */
 
 import { EngineRequest } from "./contract/request";
 import { getProcedureDb } from "./resolver/procedure.registry";
 import { getEngineConfig } from "../config/engine.loader";
 import { ENV } from "../config/env";
+import { logger } from "./logger/logger";
 
 export interface ResolvedContext {
     project: string;
@@ -27,48 +33,70 @@ export interface ResolvedContext {
 }
 
 /**
- * Convert request into executor-friendly context
+ * ============================================================
+ * RESOLVE CONTEXT
+ * ============================================================
+ *
+ * Converts request into execution-ready format
+ *
+ * Output is consumed by:
+ * - sql.executor
+ * - supabase.executor
  */
 export function resolveContext(input: EngineRequest): ResolvedContext {
-
+    /**
+     * STEP 1: LOAD ENGINE CONFIG
+     */
     const engineConfig = getEngineConfig();
 
-    // Project resolution
+    /**
+     * STEP 2: RESOLVE PROJECT
+     */
     const project = input.project || ENV.project;
 
-    // Procedure resolution
+    if (!project) {
+        throw new Error("INVALID_REQUEST: Project not provided");
+    }
+
+    /**
+     * STEP 3: RESOLVE PROCEDURE
+     */
     const procedure =
         input.action?.procedure ||
         (input as any)?.procedure;
 
-    if (!procedure) {
-        throw {
-            type: "INVALID_REQUEST",
-            message: "Procedure name is required in request"
-        };
+    if (!procedure || typeof procedure !== "string") {
+        throw new Error("INVALID_REQUEST: Procedure name is required");
     }
 
-    // ===============================
-    // DATABASE DECISION — ENGINE DRIVEN
-    // ===============================
+    /**
+     * ============================================================
+     * STEP 4: DATABASE TYPE RESOLUTION
+     * ============================================================
+     *
+     * Source:
+     * platform/<project>/procedures.json
+     */
+    const dbType = getProcedureDb(project, procedure); // MASTER | TENANT
 
-    let dbName: string | undefined;
-
-    // STEP 1: Get DB type from registry
-    const dbType = getProcedureDb(project, procedure);
-    // MASTER | TENANT
-
-    // STEP 2: Get DB mapping from engine config
-    const mapping = engineConfig.database.mapping[dbType];
+    /**
+     * STEP 5: VALIDATE ENGINE CONFIG MAPPING
+     */
+    const mapping = engineConfig?.database?.mapping?.[dbType];
 
     if (!mapping) {
-        throw {
-            type: "SERVER_ERROR",
-            message: `No DB mapping found for type: ${dbType}`
-        };
+        throw new Error(
+            `SERVER_ERROR: No DB mapping found for type: ${dbType}`
+        );
     }
 
-    // STEP 3: Resolve actual DB name from ENV
+    /**
+     * ============================================================
+     * STEP 6: RESOLVE DATABASE NAME
+     * ============================================================
+     */
+    let dbName: string | undefined;
+
     if (dbType === "MASTER") {
         dbName = ENV.engineDb.master;
     } else {
@@ -78,16 +106,18 @@ export function resolveContext(input: EngineRequest): ResolvedContext {
     }
 
     if (!dbName) {
-        throw {
-            type: "SERVER_ERROR",
-            message: `Database name not resolved for type: ${dbType}`
-        };
+        throw new Error(
+            `SERVER_ERROR: Database not resolved for type: ${dbType}`
+        );
     }
 
-    // ===============================
-    // PAYLOAD NORMALIZATION
-    // ===============================
-
+    /**
+     * ============================================================
+     * STEP 7: PAYLOAD NORMALIZATION
+     * ============================================================
+     *
+     * Ensures executor always receives consistent structure
+     */
     const payload = {
         params:
             input.action?.params ||
@@ -100,17 +130,23 @@ export function resolveContext(input: EngineRequest): ResolvedContext {
             {},
     };
 
-    // ===============================
-    // DEV LOGGING
-    // ===============================
-
+    /**
+     * ============================================================
+     * STEP 8: DEBUG LOGGING (DEV ONLY)
+     * ============================================================
+     */
     if (process.env.NODE_ENV === "development") {
-        console.log(
-            "RESOLVER → PROJECT:", project,
-            "| DB:", dbName,
-            "| PROC:", procedure,
-            "| TYPE:", dbType
-        );
+        logger.debug({
+            engine: "system",
+            action: "RESOLVER_OUTPUT",
+            message: "Resolved DB context",
+            meta: {
+                project,
+                dbName,
+                procedure,
+                dbType,
+            },
+        });
     }
 
     return {

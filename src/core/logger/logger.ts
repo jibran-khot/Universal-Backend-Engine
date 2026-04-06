@@ -7,7 +7,7 @@ interface LogPayload {
     level: LogLevel;
     timestamp: string;
     requestId?: string;
-    engine?: "sql" | "supabase" | "api";
+    engine?: "sql" | "supabase" | "api" | "guard" | "auth" | "system";
     action?: string;
     message: string;
     meta?: any;
