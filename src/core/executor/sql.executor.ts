@@ -1,10 +1,22 @@
 /**
- * ============================= SQL EXECUTOR (CORE ENGINE) =============================
+ * ============================================================
+ * SQL EXECUTOR (CORE ENGINE)
+ * ============================================================
  *
- * Production-grade SQL execution layer with structured logging + intelligent error mapping.
- * Hybrid-safe: debug in logs, safe response to client.
+ * Responsibilities:
+ * - Manage SQL connection pools (per database)
+ * - Execute stored procedures
+ * - Normalize SQL results → EngineResponse
+ * - Map SQL errors → safe API response
+ * - Provide structured logging
  *
- * =============================================================================
+ * Error Strategy:
+ * - DO NOT throw errors
+ * - Always return EngineResponse
+ *
+ * NOTE:
+ * - Timeout is configured in SQL_CONFIG (db.ts)
+ * - NOT on sqlRequest (mssql limitation)
  */
 
 import sql from "mssql";
@@ -13,31 +25,49 @@ import { EngineResponse, ResponseMeta, DataSet } from "../contract/response";
 import { logger } from "../logger/logger";
 import { SQL_ERROR_MAP } from "../errors/sql.error.codes";
 
-
-// ===============================
-// SQL POOL CACHE (per database)
-// ===============================
-
+/**
+ * ============================================================
+ * SQL POOL CACHE (per database)
+ * ============================================================
+ */
 const sqlPools: Record<string, sql.ConnectionPool> = {};
 
+/**
+ * Get or create SQL connection pool
+ * Handles broken connections safely
+ */
 async function getSqlPool(dbName: string) {
-    if (!sqlPools[dbName]) {
-        const pool = new sql.ConnectionPool({
-            ...SQL_CONFIG,
-            database: dbName,
-        });
+    const existing = sqlPools[dbName];
 
-        sqlPools[dbName] = await pool.connect();
+    // Reuse if connected
+    if (existing && existing.connected) {
+        return existing;
     }
 
-    return sqlPools[dbName];
+    // Remove broken pool
+    if (existing) {
+        try {
+            await existing.close();
+        } catch { }
+        delete sqlPools[dbName];
+    }
+
+    const pool = new sql.ConnectionPool({
+        ...SQL_CONFIG,
+        database: dbName,
+    });
+
+    const connectedPool = await pool.connect();
+    sqlPools[dbName] = connectedPool;
+
+    return connectedPool;
 }
 
-
-// ===============================
-// PAYLOAD BUILDER
-// ===============================
-
+/**
+ * ============================================================
+ * BUILD SQL PAYLOAD
+ * ============================================================
+ */
 function buildSqlPayload(payload: any, action: any) {
     return {
         ParamObj: payload?.params || action?.params || {},
@@ -45,11 +75,11 @@ function buildSqlPayload(payload: any, action: any) {
     };
 }
 
-
-// ===============================
-// DATASET NORMALIZATION
-// ===============================
-
+/**
+ * ============================================================
+ * DATASET NORMALIZATION
+ * ============================================================
+ */
 function normalizeRecordsets(recordsets: any[]): DataSet {
     const tables: Record<string, unknown[]> = {};
 
@@ -60,13 +90,12 @@ function normalizeRecordsets(recordsets: any[]): DataSet {
     return { tables };
 }
 
-
-// ===============================
-// RESULT → ENGINE RESPONSE
-// ===============================
-
+/**
+ * ============================================================
+ * SQL RESULT → ENGINE RESPONSE
+ * ============================================================
+ */
 function normalizeSqlResult(result: any, meta: ResponseMeta): EngineResponse {
-
     const recordsets = Array.isArray(result?.recordsets)
         ? result.recordsets
         : Object.values(result?.recordsets || {});
@@ -79,23 +108,19 @@ function normalizeSqlResult(result: any, meta: ResponseMeta): EngineResponse {
             success: (firstRow.StatusCode ?? 200) < 400,
             message: firstRow.Message ?? "Success",
         },
-
         data: normalizeRecordsets(recordsets),
-
         meta,
-
         statusCode: firstRow.StatusCode ?? 200,
         message: firstRow.Message ?? "Success",
     };
 }
 
-
-// ===============================
-// INTELLIGENT SQL ERROR MAPPER
-// ===============================
-
+/**
+ * ============================================================
+ * SQL ERROR MAPPING
+ * ============================================================
+ */
 function mapSqlError(err: any, meta: ResponseMeta): EngineResponse {
-
     const sqlNumber: number | string | undefined =
         err?.number ??
         err?.originalError?.info?.number;
@@ -119,7 +144,6 @@ function mapSqlError(err: any, meta: ResponseMeta): EngineResponse {
             success: false,
             message: userMessage,
         },
-
         error: {
             code: errorCode,
             engine: "sql",
@@ -127,18 +151,15 @@ function mapSqlError(err: any, meta: ResponseMeta): EngineResponse {
             type: mapped?.type || "SYSTEM",
             message: userMessage,
         },
-
         meta,
     };
 }
 
-
-
-
-// ===============================
-// MAIN EXECUTOR FUNCTION
-// ===============================
-
+/**
+ * ============================================================
+ * MAIN EXECUTOR FUNCTION
+ * ============================================================
+ */
 export async function runSqlProcedure(
     dbName: string,
     procedure: string,
@@ -149,7 +170,6 @@ export async function runSqlProcedure(
 ): Promise<EngineResponse> {
 
     const start = Date.now();
-
     const ctx = request?.__ctx;
 
     const meta: ResponseMeta = {
@@ -159,7 +179,9 @@ export async function runSqlProcedure(
         companyDb: dbName,
     };
 
-    // SQL START LOG
+    /**
+     * SQL START LOG
+     */
     logger.sql({
         requestId: ctx?.requestId,
         action: "SQL_EXECUTION_START",
@@ -173,8 +195,11 @@ export async function runSqlProcedure(
         const pool = await getSqlPool(dbName);
         const sqlRequest = pool.request();
 
-        const { ParamObj, FormObj } = buildSqlPayload(payload, action);
+        const { ParamObj, FormObj } = buildSqlPayload(payload || {}, action || {});
 
+        /**
+         * Pass JSON payload to SQL
+         */
         sqlRequest.input("ParamObj", sql.NVarChar(sql.MAX), JSON.stringify(ParamObj));
         sqlRequest.input("FormObj", sql.NVarChar(sql.MAX), JSON.stringify(FormObj));
 
@@ -182,7 +207,9 @@ export async function runSqlProcedure(
 
         meta.durationMs = Date.now() - start;
 
-        // SQL SUCCESS LOG
+        /**
+         * SQL SUCCESS LOG
+         */
         logger.sql({
             requestId: ctx?.requestId,
             action: "SQL_EXECUTION_SUCCESS",
@@ -199,7 +226,9 @@ export async function runSqlProcedure(
 
         meta.durationMs = Date.now() - start;
 
-        // 🔴 FULL DEBUG IN LOGS ONLY
+        /**
+         * FULL ERROR LOG (INTERNAL ONLY)
+         */
         logger.error({
             requestId: ctx?.requestId,
             engine: "sql",
