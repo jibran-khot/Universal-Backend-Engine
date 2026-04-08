@@ -79,7 +79,7 @@ export interface ResponseMeta {
     timestamp?: number;
     durationMs?: number;
     db?: "sql" | "supabase";
-    companyDb?: string;
+    tenantId?: string;
     procedure?: string;
 }
 

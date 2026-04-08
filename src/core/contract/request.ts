@@ -1,28 +1,18 @@
 /**
  * ============================= UNIVERSAL REQUEST CONTRACT =============================
  *
- * Ye file backend engine ka ENTRY GATE hai.
- * Angular / client jo bhi request bhejega — wo isi structure me hoga.
+ * ENTRY POINT of backend engine.
+ * All client requests MUST conform to this structure.
  *
- * Backend flow:
+ * FLOW:
+ * Client → Request Contract → Resolver → Executor → Database
  *
- * Angular / Client
- *        ↓
- * Request Contract (ye file)
- *        ↓
- * DB Resolver (decide karega kaunsa DB hit hoga)
- *        ↓
- * SQL Executor (stored procedure execute karega)
- *        ↓
- * SQL Server
- *
- * Purpose:
- * - Har project same request structure use kare
- * - Multi-tenant support (companyDb switching)
- * - Auth + metadata + procedure ek standard format me aaye
- * - Future me modules add ho sake bina breaking change ke
- *
- * Ye sirf TYPE definition hai — koi business logic nahi.
+ * DESIGN PRINCIPLES:
+ * - Strict contract enforcement
+ * - Multi-tenant ready
+ * - No business logic
+ * - Forward compatible
+ * - Immutable input
  *
  * =============================================================================
  */
@@ -33,51 +23,79 @@
 /* -------------------------------------------------------------------------- */
 
 export interface RequestMeta {
-    requestId?: string;
-    timestamp?: number;
-    version?: string;
-    source?: string;
+    readonly requestId?: string;
+    readonly timestamp?: number;
+    readonly version?: string;
+    readonly source?: string;
+
+    /**
+     * Future extensibility (feature flags, tracing, etc.)
+     */
+    readonly context?: Record<string, unknown>;
 }
 
 
 /* -------------------------------------------------------------------------- */
-/* AUTH SECTION                                                               */
+/* AUTH / TENANT SECTION                                                      */
 /* -------------------------------------------------------------------------- */
 
 export interface RequestAuth {
-    token?: string;
-    companyDb?: string;
-    userId?: string;
+    readonly token?: string;
+
+    /**
+     * Logical tenant identifier
+     * Resolver maps this → actual DB
+     */
+    readonly tenantId?: string;
+
+    readonly userId?: string;
 }
 
 
 /* -------------------------------------------------------------------------- */
-/* ACTION SECTION                                                             */
+/* ACTION SECTION (PRIMARY EXECUTION UNIT)                                     */
 /* -------------------------------------------------------------------------- */
 
 export interface RequestAction {
 
-    procedure: string;
-
-    params?: Record<string, unknown>;
-
-    form?: Record<string, unknown>;
+    /**
+     * Stored procedure name
+     */
+    readonly procedure: string;
 
     /**
-     * Future:
-     * admin/dev tools ke liye direct SQL
+     * Input parameters for procedure
      */
-    inlineSQL?: string;
+    readonly params?: Record<string, unknown>;
+
+    /**
+     * Form-style payload (UI driven)
+     */
+    readonly form?: Record<string, unknown>;
+
+    /**
+     * ⚠️ Restricted usage
+     * Only for admin/dev tools (must be guarded)
+     */
+    readonly inlineSQL?: string;
 }
 
 
 /* -------------------------------------------------------------------------- */
-/* BACKWARD COMPATIBILITY                                                     */
+/* BACKWARD COMPATIBILITY (DEPRECATED)                                        */
 /* -------------------------------------------------------------------------- */
 
 export interface EnginePayload {
-    params?: Record<string, unknown>;
-    data?: Record<string, unknown>;
+
+    /**
+     * @deprecated Use action.params instead
+     */
+    readonly params?: Record<string, unknown>;
+
+    /**
+     * @deprecated Use action.form instead
+     */
+    readonly data?: Record<string, unknown>;
 }
 
 
@@ -87,13 +105,22 @@ export interface EnginePayload {
 
 export interface EngineRequest {
 
-    project?: string;
+    /**
+     * Project identifier (required for routing/config)
+     */
+    readonly project: string;
 
-    meta?: RequestMeta;
+    readonly meta?: RequestMeta;
 
-    auth?: RequestAuth;
+    readonly auth?: RequestAuth;
 
-    action: RequestAction;
+    /**
+     * Core execution definition
+     */
+    readonly action: RequestAction;
 
-    payload?: EnginePayload;
+    /**
+     * @deprecated Legacy support only
+     */
+    readonly payload?: EnginePayload;
 }
