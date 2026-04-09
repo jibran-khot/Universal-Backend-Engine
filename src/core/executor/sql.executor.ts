@@ -4,51 +4,48 @@
  * ============================================================
  *
  * Responsibilities:
- * - Manage SQL connection pools (per database)
+ * - Manage SQL connection pools
  * - Execute stored procedures
  * - Normalize SQL results → EngineResponse
- * - Map SQL errors → safe API response
- * - Provide structured logging
+ * - Map SQL errors → EngineResponse
  *
- * Error Strategy:
- * - DO NOT throw errors
- * - Always return EngineResponse
- *
- * NOTE:
- * - Timeout is configured in SQL_CONFIG (db.ts)
- * - NOT on sqlRequest (mssql limitation)
+ * RULE:
+ * - NEVER throw → always return EngineResponse
  */
 
 import sql from "mssql";
 import { SQL_CONFIG } from "../../config/db";
-import { EngineResponse, ResponseMeta, DataSet } from "../contract/response";
+import {
+    EngineResponse,
+    ResponseMeta,
+    DataSet
+} from "../contract/response";
 import { logger } from "../logger/logger";
 import { SQL_ERROR_MAP } from "../errors/sql.error.codes";
 
-/**
- * ============================================================
- * SQL POOL CACHE (per database)
- * ============================================================
- */
+// ===============================
+// Types
+// ===============================
+
+type SafeObject = Record<string, unknown>;
+
+// ===============================
+// POOL CACHE
+// ===============================
+
 const sqlPools: Record<string, sql.ConnectionPool> = {};
 
-/**
- * Get or create SQL connection pool
- * Handles broken connections safely
- */
-async function getSqlPool(dbName: string) {
+// ===============================
+// POOL MANAGER
+// ===============================
+
+async function getSqlPool(dbName: string): Promise<sql.ConnectionPool> {
     const existing = sqlPools[dbName];
 
-    // Reuse if connected
-    if (existing && existing.connected) {
-        return existing;
-    }
+    if (existing?.connected) return existing;
 
-    // Remove broken pool
     if (existing) {
-        try {
-            await existing.close();
-        } catch { }
+        try { await existing.close(); } catch { }
         delete sqlPools[dbName];
     }
 
@@ -57,73 +54,113 @@ async function getSqlPool(dbName: string) {
         database: dbName,
     });
 
-    const connectedPool = await pool.connect();
-    sqlPools[dbName] = connectedPool;
+    const connected = await pool.connect();
+    sqlPools[dbName] = connected;
 
-    return connectedPool;
+    return connected;
 }
 
-/**
- * ============================================================
- * BUILD SQL PAYLOAD
- * ============================================================
- */
-function buildSqlPayload(payload: any, action: any) {
+// ===============================
+// PAYLOAD BUILDER
+// ===============================
+
+function buildSqlPayload(
+    payload: unknown,
+    action: unknown
+): { ParamObj: SafeObject; FormObj: SafeObject } {
+
+    const p = (payload || {}) as {
+        params?: SafeObject;
+        data?: SafeObject;
+    };
+
+    const a = (action || {}) as {
+        params?: SafeObject;
+        form?: SafeObject;
+    };
+
     return {
-        ParamObj: payload?.params || action?.params || {},
-        FormObj: payload?.data || action?.form || {},
+        ParamObj: p.params ?? a.params ?? {},
+        FormObj: p.data ?? a.form ?? {},
     };
 }
 
-/**
- * ============================================================
- * DATASET NORMALIZATION
- * ============================================================
- */
-function normalizeRecordsets(recordsets: any[]): DataSet {
+// ===============================
+// DATASET NORMALIZATION
+// ===============================
+
+function normalizeRecordsets(recordsets: unknown[]): DataSet {
+
     const tables: Record<string, unknown[]> = {};
 
     recordsets.forEach((set, index) => {
-        tables[`table${index + 1}`] = set;
+        tables[`table${index + 1}`] = Array.isArray(set) ? set : [];
     });
 
     return { tables };
 }
 
-/**
- * ============================================================
- * SQL RESULT → ENGINE RESPONSE
- * ============================================================
- */
-function normalizeSqlResult(result: any, meta: ResponseMeta): EngineResponse {
-    const recordsets = Array.isArray(result?.recordsets)
-        ? result.recordsets
-        : Object.values(result?.recordsets || {});
+// ===============================
+// RESULT NORMALIZATION
+// ===============================
 
-    const firstRow = recordsets?.[0]?.[0] || {};
+function normalizeSqlResult(
+    result: unknown,
+    meta: ResponseMeta
+): EngineResponse {
+
+    const safeResult = result as {
+        recordsets?: unknown[];
+    };
+
+    const recordsets = Array.isArray(safeResult?.recordsets)
+        ? safeResult.recordsets
+        : [];
+
+    const firstRow =
+        (recordsets?.[0] as unknown[])?.[0] as Record<string, unknown> || {};
+
+    const statusCode =
+        typeof firstRow?.StatusCode === "number"
+            ? firstRow.StatusCode
+            : 200;
+
+    const message =
+        typeof firstRow?.Message === "string"
+            ? firstRow.Message
+            : "Success";
 
     return {
         status: {
-            code: firstRow.StatusCode ?? 200,
-            success: (firstRow.StatusCode ?? 200) < 400,
-            message: firstRow.Message ?? "Success",
+            code: statusCode,
+            success: statusCode < 400,
+            message,
         },
         data: normalizeRecordsets(recordsets),
         meta,
-        statusCode: firstRow.StatusCode ?? 200,
-        message: firstRow.Message ?? "Success",
+        statusCode,
+        message,
     };
 }
 
-/**
- * ============================================================
- * SQL ERROR MAPPING
- * ============================================================
- */
-function mapSqlError(err: any, meta: ResponseMeta): EngineResponse {
-    const sqlNumber: number | string | undefined =
-        err?.number ??
-        err?.originalError?.info?.number;
+// ===============================
+// ERROR MAPPING
+// ===============================
+
+function mapSqlError(
+    err: unknown,
+    meta: ResponseMeta
+): EngineResponse {
+
+    const e = err as {
+        number?: number;
+        originalError?: { info?: { number?: number } };
+        message?: string;
+    };
+
+    const sqlNumber =
+        e?.number ??
+        e?.originalError?.info?.number;
 
     const mapped =
         sqlNumber !== undefined
@@ -131,12 +168,9 @@ function mapSqlError(err: any, meta: ResponseMeta): EngineResponse {
             : undefined;
 
     const errorCode = mapped?.code || "E_SQL_EXECUTION_ERROR";
-
     const userMessage =
         mapped?.userMessage ||
         "Something went wrong while processing your request.";
-
-    const retryable = mapped?.retryable ?? false;
 
     return {
         status: {
@@ -147,41 +181,42 @@ function mapSqlError(err: any, meta: ResponseMeta): EngineResponse {
         error: {
             code: errorCode,
             engine: "sql",
-            retryable,
+            retryable: mapped?.retryable ?? false,
             type: mapped?.type || "SYSTEM",
             message: userMessage,
+            details: err, // internal only
         },
         meta,
     };
 }
 
-/**
- * ============================================================
- * MAIN EXECUTOR FUNCTION
- * ============================================================
- */
+// ===============================
+// MAIN EXECUTOR
+// ===============================
+
 export async function runSqlProcedure(
     dbName: string,
     procedure: string,
-    payload: any,
+    payload: unknown,
     project: string,
-    action?: any,
-    request?: any
+    action?: unknown,
+    request?: unknown
 ): Promise<EngineResponse> {
 
     const start = Date.now();
-    const ctx = request?.__ctx;
+
+    const ctx = (request as {
+        __ctx?: { requestId?: string };
+    })?.__ctx;
 
     const meta: ResponseMeta = {
+        requestId: ctx?.requestId,
         timestamp: start,
         db: "sql",
         procedure,
         companyDb: dbName,
     };
 
-    /**
-     * SQL START LOG
-     */
     logger.sql({
         requestId: ctx?.requestId,
         action: "SQL_EXECUTION_START",
@@ -192,14 +227,12 @@ export async function runSqlProcedure(
     });
 
     try {
+
         const pool = await getSqlPool(dbName);
         const sqlRequest = pool.request();
 
-        const { ParamObj, FormObj } = buildSqlPayload(payload || {}, action || {});
+        const { ParamObj, FormObj } = buildSqlPayload(payload, action);
 
-        /**
-         * Pass JSON payload to SQL
-         */
         sqlRequest.input("ParamObj", sql.NVarChar(sql.MAX), JSON.stringify(ParamObj));
         sqlRequest.input("FormObj", sql.NVarChar(sql.MAX), JSON.stringify(FormObj));
 
@@ -207,9 +240,6 @@ export async function runSqlProcedure(
 
         meta.durationMs = Date.now() - start;
 
-        /**
-         * SQL SUCCESS LOG
-         */
         logger.sql({
             requestId: ctx?.requestId,
             action: "SQL_EXECUTION_SUCCESS",
@@ -222,18 +252,15 @@ export async function runSqlProcedure(
 
         return normalizeSqlResult(result, meta);
 
-    } catch (err: any) {
+    } catch (err: unknown) {
 
         meta.durationMs = Date.now() - start;
 
-        /**
-         * FULL ERROR LOG (INTERNAL ONLY)
-         */
         logger.error({
             requestId: ctx?.requestId,
             engine: "sql",
             action: "SQL_EXECUTION_ERROR",
-            message: err?.message || "SQL execution failure",
+            message: "SQL execution failure",
             project,
             procedure,
             db: dbName,
