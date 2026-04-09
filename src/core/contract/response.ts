@@ -1,38 +1,26 @@
 /**
  * ============================= UNIVERSAL RESPONSE CONTRACT =============================
  *
- * Ye backend engine ka OUTPUT STANDARD define karta hai.
+ * PURPOSE:
+ * - Backend → Frontend communication standard
+ * - Stable structure across SQL / Supabase / API
+ * - Ensures frontend never depends on DB-specific format
  *
- * Flow:
- *
- * SQL Server
- *     ↓
- * SQL Executor
- *     ↓
- * Response Contract (ye file)
- *     ↓
- * Angular / Client
- *
- * Purpose:
- * - Frontend ko SQL ka format samajhna na pade
- * - Har project me same response structure rahe
- * - Success / Error standard ho
- * - Logging aur debugging easy ho
- *
- * Agar ye stable hai → frontend kabhi break nahi hoga.
+ * IMPORTANT RULE:
+ * - "status" is the source of truth
+ * - "statusCode/message" are backward compatibility only
  *
  * =============================================================================
  */
-
 
 /* -------------------------------------------------------------------------- */
 /* STATUS OBJECT                                                              */
 /* -------------------------------------------------------------------------- */
 
 export interface ResponseStatus {
-    code: number;
-    success: boolean;
-    message: string;
+    readonly code: number;        // HTTP-like status
+    readonly success: boolean;    // true/false
+    readonly message: string;     // user-readable message
 }
 
 
@@ -40,23 +28,34 @@ export interface ResponseStatus {
 /* ERROR STRUCTURE                                                            */
 /* -------------------------------------------------------------------------- */
 
+export type ErrorEngine = "sql" | "supabase" | "api";
+
+export type ErrorType =
+    | "SYSTEM"
+    | "DATA"
+    | "SECURITY"
+    | "AUTH";
+
 export interface ResponseError {
     code: string;
     message: string;
 
     /**
-     * Phase-3 engine intelligence fields
+     * Error classification
      */
-    engine?: "sql" | "supabase" | "api";
-    retryable?: boolean;
-    type?: "SYSTEM" | "DATA" | "SECURITY" | "AUTH";
+    engine?: ErrorEngine;
+    type?: ErrorType;
 
     /**
-     * Debug / internal
+     * Retry hint (future circuit breaker use)
+     */
+    retryable?: boolean;
+
+    /**
+     * Debug / internal (never expose blindly to frontend)
      */
     details?: unknown;
 }
-
 
 
 /* -------------------------------------------------------------------------- */
@@ -64,8 +63,20 @@ export interface ResponseError {
 /* -------------------------------------------------------------------------- */
 
 export interface DataSet {
+    /**
+     * Multi-table result (SQL style)
+     * Example: { users: [], orders: [] }
+     */
     tables?: Record<string, unknown[]>;
+
+    /**
+     * Single result / scalar / array
+     */
     data?: unknown;
+
+    /**
+     * Output params (stored procedures)
+     */
     output?: Record<string, unknown>;
 }
 
@@ -78,8 +89,12 @@ export interface ResponseMeta {
     requestId?: string;
     timestamp?: number;
     durationMs?: number;
+
+    /**
+     * Execution tracking
+     */
     db?: "sql" | "supabase";
-    tenantId?: string;
+    companyDb?: string;
     procedure?: string;
 }
 
@@ -90,17 +105,32 @@ export interface ResponseMeta {
 
 export interface EngineResponse<T = unknown> {
 
+    /**
+     * SOURCE OF TRUTH
+     */
     status: ResponseStatus;
 
+    /**
+     * Data payload
+     */
     data?: T | DataSet;
 
+    /**
+     * Error object (only when success=false)
+     */
     error?: ResponseError;
 
+    /**
+     * Observability / tracing
+     */
     meta?: ResponseMeta;
 
     /**
-     * OLD SUPPORT — existing frontend break nahi hoga
+     * ----------------------------------------------------------------------
+     * BACKWARD COMPATIBILITY (DO NOT USE IN NEW CODE)
+     * ----------------------------------------------------------------------
      */
+
     statusCode?: number;
     message?: string;
 }

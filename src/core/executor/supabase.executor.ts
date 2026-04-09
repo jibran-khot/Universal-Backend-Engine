@@ -1,15 +1,29 @@
 /**
- * This file executes Supabase RPC functions (Postgres procedures).
- * It sends payload to Supabase, handles errors, and normalizes results
- * into the engine response format.
+ * Supabase Executor
+ * ----------------------------------------------------------------------------
+ * जिम्मेदारी:
+ * - Supabase RPC (Postgres function) execute करना
+ * - Payload normalize करना
+ * - EngineResponse contract maintain करना
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { ENV } from "../../config/env";
 import { EngineResponse } from "../contract/response";
+import { logger } from "../logger/logger";
+import { EngineRequest } from "../contract/request";
 
 // ===============================
-// SUPABASE CLIENT (singleton)
+// Types
+// ===============================
+
+interface SupabasePayload {
+    ParamObj: Record<string, unknown>;
+    DataObj: Record<string, unknown>;
+}
+
+// ===============================
+// CLIENT (singleton)
 // ===============================
 
 const supabase = createClient(
@@ -17,74 +31,137 @@ const supabase = createClient(
     ENV.db.supabase.serviceKey
 );
 
-/**
- * Builds payload structure sent to Supabase RPC.
- */
-function buildSupabasePayload(payload: any) {
+// ===============================
+// Helpers
+// ===============================
+
+function buildSupabasePayload(payload: unknown): SupabasePayload {
+    const safePayload = (payload || {}) as {
+        params?: Record<string, unknown>;
+        data?: Record<string, unknown>;
+    };
+
     return {
-        ParamObj: payload?.params || {},
-        DataObj: payload?.data || {},
+        ParamObj: safePayload.params ?? {},
+        DataObj: safePayload.data ?? {},
     };
 }
 
-/**
- * Normalizes Supabase result into engine response format.
- */
 function normalizeSupabaseResult(
-    data: any,
-    error: any,
-    meta: any
+    data: unknown,
+    error: unknown,
+    meta: Record<string, unknown>
 ): EngineResponse {
+
     if (error) {
+        const err = error as { message?: string };
+
         return {
             statusCode: 500,
-            message: error.message,
+            message: err?.message || "Supabase execution failed",
             data: [],
             meta,
         };
     }
 
-    // If Supabase function already returns engine-style response
-    if (data?.statusCode !== undefined) {
+    // Already in engine format
+    if (
+        typeof data === "object" &&
+        data !== null &&
+        "statusCode" in data
+    ) {
+        const res = data as EngineResponse;
+
         return {
-            statusCode: data.statusCode,
-            message: data.message ?? "Success",
-            data: data.data ?? [],
+            statusCode: res.statusCode,
+            message: res.message ?? "Success",
+            data: res.data ?? [],
             meta,
         };
     }
 
-    // Wrap raw data into engine dataset
+    // Normalize to dataset (2D array)
+    const normalizedData = Array.isArray(data)
+        ? data
+        : [[data]];
+
     return {
         statusCode: 200,
         message: "Success",
-        data: Array.isArray(data) ? [data] : [[data]],
+        data: normalizedData,
         meta,
     };
 }
 
-/**
- * Executes a Supabase RPC function.
- */
+// ===============================
+// Main Executor
+// ===============================
+
 export async function runSupabaseProcedure(
     procedure: string,
-    payload: any,
-    project: string
+    payload: unknown,
+    project: string,
+    input?: EngineRequest
 ): Promise<EngineResponse> {
-    const { ParamObj, DataObj } = buildSupabasePayload(payload);
 
     const start = Date.now();
 
-    const { data, error } = await supabase.rpc(procedure, {
-        ParamObj,
-        DataObj,
-    });
+    const execCtx = (input as unknown as {
+        __ctx?: { requestId?: string };
+    })?.__ctx;
 
-    const durationMs = Date.now() - start;
+    if (!procedure) {
+        throw {
+            type: "INVALID_PROCEDURE",
+            message: "Supabase procedure name is required",
+        };
+    }
 
-    return normalizeSupabaseResult(data, error, {
-        project,
-        db: "supabase",
-        durationMs,
-    });
+    const { ParamObj, DataObj } = buildSupabasePayload(payload);
+
+    try {
+
+        const { data, error } = await supabase.rpc(procedure, {
+            ParamObj,
+            DataObj,
+        });
+
+        const durationMs = Date.now() - start;
+
+        const response = normalizeSupabaseResult(data, error, {
+            project,
+            db: "supabase",
+            durationMs,
+        });
+
+        logger.supabase({
+            requestId: execCtx?.requestId,
+            engine: "supabase",
+            action: "SUPABASE_EXECUTION",
+            message: error ? "Execution failed" : "Execution successful",
+            durationMs,
+            project,
+            procedure,
+        });
+
+        return response;
+
+    } catch (err: unknown) {
+
+        logger.error({
+            requestId: execCtx?.requestId,
+            engine: "supabase",
+            action: "SUPABASE_EXECUTION_ERROR",
+            message: "Unexpected Supabase execution failure",
+            project,
+            procedure,
+            meta: err,
+        });
+
+        throw {
+            type: "SUPABASE_EXECUTION_FAILED",
+            message: "Supabase execution failed",
+            meta: err,
+        };
+    }
 }
