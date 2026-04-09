@@ -6,8 +6,8 @@
 
     /* Node.js Backend */
     "target": "ES2020",
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "Node16",
+    "moduleResolution": "node16",
 
     /* Type Safety */
     "strict": true,
