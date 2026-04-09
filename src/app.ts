@@ -2,76 +2,49 @@ import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import routes from "./routes";
-import { errorHandler } from "./core/errors/error.handler";
+import { handleError } from "./core/errors/error.handler";
 import { v4 as uuidv4 } from "uuid";
+import { ExecutionContext } from "./core/context";
 
 const app = express();
 
-/**
- * ============================================================
- * SECURITY MIDDLEWARE
- * ============================================================
- *
- * helmet:
- * - Sets secure HTTP headers
- * - Protects against common vulnerabilities
- */
-app.use(helmet());
+// ===============================
+// SECURITY
+// ===============================
 
-/**
- * ============================================================
- * CORS CONFIGURATION
- * ============================================================
- *
- * Allows cross-origin requests (Angular frontend, etc.)
- * Can be restricted later for production domains
- */
+app.use(helmet());
 app.use(cors());
 
-/**
- * ============================================================
- * BODY PARSER (JSON)
- * ============================================================
- *
- * Parses incoming JSON payloads
- * Limit prevents large payload attacks (DoS protection)
- */
+// ===============================
+// BODY PARSER
+// ===============================
+
 app.use(
     express.json({
         limit: "1mb",
     })
 );
 
-/**
- * ============================================================
- * REQUEST CONTEXT MIDDLEWARE
- * ============================================================
- *
- * Attaches metadata to every request:
- * - requestId → unique identifier for tracing
- * - startTime → used for performance logging
- *
- * This context flows through:
- * routes → run → executor → logger
- */
-app.use((req: Request, res: Response, next: NextFunction) => {
-    (req as any).context = {
+// ===============================
+// REQUEST CONTEXT (FIXED 🔥)
+// ===============================
+
+app.use((req: Request, _res: Response, next: NextFunction) => {
+
+    const ctx: ExecutionContext = {
         requestId: uuidv4(),
         startTime: Date.now(),
     };
+
+    (req as unknown as { __ctx?: ExecutionContext }).__ctx = ctx;
+
     next();
 });
 
-/**
- * ============================================================
- * HEALTH CHECK ENDPOINT
- * ============================================================
- *
- * Used by:
- * - Load balancers
- * - Monitoring systems
- * - Kubernetes readiness probes
- */
+// ===============================
+// HEALTH CHECK
+// ===============================
+
 app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({
         status: "OK",
@@ -79,44 +52,41 @@ app.get("/health", (_req: Request, res: Response) => {
     });
 });
 
-/**
- * ============================================================
- * ROUTE MOUNTING
- * ============================================================
- *
- * All API routes are prefixed with /api
- * Example:
- * POST /api/run
- */
+// ===============================
+// ROUTES
+// ===============================
+
 app.use("/api", routes);
 
-/**
- * ============================================================
- * 404 HANDLER
- * ============================================================
- *
- * Handles unknown routes
- * Must be after all route definitions
- */
+// ===============================
+// 404 HANDLER (STANDARDIZED)
+// ===============================
+
 app.use((_req: Request, res: Response) => {
     res.status(404).json({
-        status: "FAIL",
-        message: "Route not found",
+        status: {
+            code: 404,
+            success: false,
+            message: "Route not found",
+        },
+        error: {
+            code: "NOT_FOUND",
+            message: "Route not found",
+        },
     });
 });
 
-/**
- * ============================================================
- * GLOBAL ERROR HANDLER
- * ============================================================
- *
- * Centralized error processing:
- * - Formats response
- * - Logs errors
- * - Maps engine errors
- *
- * MUST be the last middleware
- */
-app.use(errorHandler);
+// ===============================
+// GLOBAL ERROR HANDLER (FIXED 🔥)
+// ===============================
+
+app.use(
+    (err: unknown, req: Request, res: Response, _next: NextFunction) => {
+
+        const response = handleError(err, req);
+
+        res.status(response.statusCode || 500).json(response);
+    }
+);
 
 export default app;
