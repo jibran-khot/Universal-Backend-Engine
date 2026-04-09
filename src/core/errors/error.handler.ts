@@ -1,86 +1,38 @@
 /**
  * ============================= GLOBAL ERROR HANDLER =============================
- *
- * Converts all thrown errors into structured EngineResponse.
- * Supports engine-level error types:
- *
- * INVALID_REQUEST → 400
- * PROCEDURE_NOT_ALLOWED → 403
- * SERVER_ERROR → 500
- *
- * SQL errors remain 500.
- * ============================================================
  */
 
 import { EngineResponse } from "../contract/response";
 import { logger } from "../logger/logger";
+import { buildError } from "../utils/response.builder";
+import { ExecutionContext } from "../context"; // ✅ FIX
 
-export function handleError(err: any, request?: any): EngineResponse {
+export function handleError(
+    err: unknown,
+    request?: unknown
+): EngineResponse {
 
-    const ctx = request?.__ctx;
+    const req = request as {
+        __ctx?: ExecutionContext; // ✅ FIXED TYPE
+    };
 
-    let code = 500;
-    let errorCode = "SERVER_ERROR";
-    let message = "Internal Server Error";
+    const ctx = req?.__ctx;
 
-    // Engine structured errors
-    if (err?.type) {
+    const e = err as { message?: string };
 
-        message = err.message || message;
-
-        switch (err.type) {
-
-            case "INVALID_REQUEST":
-                code = 400;
-                errorCode = "INVALID_REQUEST";
-                break;
-
-            case "PROCEDURE_NOT_ALLOWED":
-                code = 403;
-                errorCode = "PROCEDURE_NOT_ALLOWED";
-                break;
-
-            default:
-                code = 500;
-                errorCode = "SERVER_ERROR";
-        }
-    }
-
-    // Normal JS / SQL errors
-    else if (err?.message) {
-        message = err.message;
-    }
-
-    // 🔴 STRUCTURED ERROR LOG
+    // -------------------------------
+    // LOGGING
+    // -------------------------------
     logger.error({
         requestId: ctx?.requestId,
-        engine: ctx?.engine,
+        engine: ctx?.engine, // ✅ now perfectly typed
         action: "ENGINE_ERROR_HANDLER",
-        message,
+        message: e?.message || "Unhandled error",
         meta: err,
     });
 
-    return {
-        status: {
-            code,
-            success: false,
-            message,
-        },
-
-        error: {
-            code: errorCode,
-            message,
-            details:
-                process.env.NODE_ENV === "development"
-                    ? err
-                    : undefined,
-        },
-
-        meta: {
-            timestamp: Date.now(),
-        },
-
-        statusCode: code,
-        message,
-    };
+    // -------------------------------
+    // RESPONSE
+    // -------------------------------
+    return buildError(err);
 }
