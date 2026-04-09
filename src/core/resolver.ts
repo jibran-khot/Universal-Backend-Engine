@@ -2,18 +2,6 @@
  * ============================================================
  * DATABASE RESOLVER
  * ============================================================
- *
- * Purpose:
- * - Resolve which database to use for a given request
- * - Convert EngineRequest → executor-friendly context
- *
- * Flow:
- * run → resolver → executor
- *
- * DB Resolution Strategy:
- * 1. procedure.registry → determines DB type (MASTER / TENANT)
- * 2. engine.config → validates mapping
- * 3. ENV → resolves actual database name
  */
 
 import { EngineRequest } from "./contract/request";
@@ -22,67 +10,99 @@ import { getEngineConfig } from "../config/engine.loader";
 import { ENV } from "../config/env";
 import { logger } from "./logger/logger";
 
+// ===============================
+// Types
+// ===============================
+
+type DbType = "MASTER" | "TENANT";
+
 export interface ResolvedContext {
     project: string;
     dbName?: string;
     procedure: string;
     payload: {
-        params?: Record<string, unknown>;
-        data?: Record<string, unknown>;
+        params: Record<string, unknown>;
+        data: Record<string, unknown>;
     };
 }
 
-/**
- * ============================================================
- * RESOLVE CONTEXT
- * ============================================================
- *
- * Converts request into execution-ready format
- *
- * Output is consumed by:
- * - sql.executor
- * - supabase.executor
- */
+// ===============================
+// Helpers
+// ===============================
+
+function isDbType(value: unknown): value is DbType {
+    return value === "MASTER" || value === "TENANT";
+}
+
+function safeObject(value: unknown): Record<string, unknown> {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+    return {};
+}
+
+// ===============================
+// Resolver
+// ===============================
+
 export function resolveContext(input: EngineRequest): ResolvedContext {
-    /**
-     * STEP 1: LOAD ENGINE CONFIG
-     */
+
+    const ctx = (input as {
+        __ctx?: { requestId?: string };
+    })?.__ctx;
+
+    // ===============================
+    // STEP 1: LOAD ENGINE CONFIG
+    // ===============================
     const engineConfig = getEngineConfig();
 
-    /**
-     * STEP 2: RESOLVE PROJECT
-     */
+    if (!engineConfig?.database?.mapping) {
+        throw new Error("SERVER_ERROR: Invalid engine configuration");
+    }
+
+    // ===============================
+    // STEP 2: PROJECT
+    // ===============================
     const project = input.project || ENV.project;
 
     if (!project) {
         throw new Error("INVALID_REQUEST: Project not provided");
     }
 
-    /**
-     * STEP 3: RESOLVE PROCEDURE
-     */
-    const procedure =
-        input.action?.procedure ||
-        (input as any)?.procedure;
+    // ===============================
+    // STEP 3: PROCEDURE
+    // ===============================
+    const rawInput = input as unknown as Record<string, unknown>;
 
-    if (!procedure || typeof procedure !== "string") {
+    let procedure: string | undefined;
+
+    if (typeof input.action?.procedure === "string") {
+        procedure = input.action.procedure;
+    } else if (typeof rawInput["procedure"] === "string") {
+        procedure = rawInput["procedure"] as string;
+    }
+
+    if (!procedure) {
         throw new Error("INVALID_REQUEST: Procedure name is required");
     }
 
-    /**
-     * ============================================================
-     * STEP 4: DATABASE TYPE RESOLUTION
-     * ============================================================
-     *
-     * Source:
-     * platform/<project>/procedures.json
-     */
-    const dbType = getProcedureDb(project, procedure); // MASTER | TENANT
+    // ===============================
+    // STEP 4: DB TYPE
+    // ===============================
+    const rawDbType = getProcedureDb(project, procedure);
 
-    /**
-     * STEP 5: VALIDATE ENGINE CONFIG MAPPING
-     */
-    const mapping = engineConfig?.database?.mapping?.[dbType];
+    if (!isDbType(rawDbType)) {
+        throw new Error(
+            `SERVER_ERROR: Invalid DB type mapping for procedure: ${procedure}`
+        );
+    }
+
+    const dbType = rawDbType;
+
+    // ===============================
+    // STEP 5: CONFIG VALIDATION
+    // ===============================
+    const mapping = engineConfig.database.mapping[dbType];
 
     if (!mapping) {
         throw new Error(
@@ -90,11 +110,9 @@ export function resolveContext(input: EngineRequest): ResolvedContext {
         );
     }
 
-    /**
-     * ============================================================
-     * STEP 6: RESOLVE DATABASE NAME
-     * ============================================================
-     */
+    // ===============================
+    // STEP 6: DB NAME
+    // ===============================
     let dbName: string | undefined;
 
     if (dbType === "MASTER") {
@@ -111,32 +129,26 @@ export function resolveContext(input: EngineRequest): ResolvedContext {
         );
     }
 
-    /**
-     * ============================================================
-     * STEP 7: PAYLOAD NORMALIZATION
-     * ============================================================
-     *
-     * Ensures executor always receives consistent structure
-     */
+    // ===============================
+    // STEP 7: PAYLOAD
+    // ===============================
     const payload = {
-        params:
-            input.action?.params ||
-            input.payload?.params ||
-            {},
-
-        data:
-            input.action?.form ||
-            input.payload?.data ||
-            {},
+        params: {
+            ...safeObject(input.payload?.params),
+            ...safeObject(input.action?.params),
+        },
+        data: {
+            ...safeObject(input.payload?.data),
+            ...safeObject(input.action?.form),
+        },
     };
 
-    /**
-     * ============================================================
-     * STEP 8: DEBUG LOGGING (DEV ONLY)
-     * ============================================================
-     */
+    // ===============================
+    // STEP 8: DEBUG LOG
+    // ===============================
     if (process.env.NODE_ENV === "development") {
         logger.debug({
+            requestId: ctx?.requestId,
             engine: "system",
             action: "RESOLVER_OUTPUT",
             message: "Resolved DB context",
