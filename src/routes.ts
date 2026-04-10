@@ -42,12 +42,7 @@ router.post(
         mutableBody.__ctx = rawReq.__ctx;
 
         const result = await run(body);
-        // -------------------------------
-        // STEP 5: SEND RESPONSE (FIXED 🔥)
-        // -------------------------------
-        res
-            .status(result.statusCode || 200)
-            .json(result);
+        res.status(result.statusCode || 200).json(result);
     })
 );
 
