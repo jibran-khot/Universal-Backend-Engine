@@ -1,43 +1,24 @@
-/**
- * ============================================================
- * SQL EXECUTOR (CORE ENGINE)
- * ============================================================
- *
- * Responsibilities:
- * - Manage SQL connection pools
- * - Execute stored procedures
- * - Normalize SQL results → EngineResponse
- * - Map SQL errors → EngineResponse
- *
- * RULE:
- * - NEVER throw → always return EngineResponse
- */
-
 import sql from "mssql";
 import { SQL_CONFIG } from "../../config/db";
-import {
-    EngineResponse,
-    ResponseMeta,
-    DataSet
-} from "../contract/response";
+import { EngineResponse } from "../contract/response";
 import { logger } from "../logger/logger";
 import { SQL_ERROR_MAP } from "../errors/sql.error.codes";
 
-// ===============================
-// Types
-// ===============================
+type ExecutionInput = Readonly<{
+    ctx: Readonly<{
+        requestId: string;
+        startTime: number;
+    }>;
+    procedure: string;
+    project: string;
+    dbName: string;
+    payload: unknown;
+    action: unknown;
+}>;
 
 type SafeObject = Record<string, unknown>;
 
-// ===============================
-// POOL CACHE
-// ===============================
-
 const sqlPools: Record<string, sql.ConnectionPool> = {};
-
-// ===============================
-// POOL MANAGER
-// ===============================
 
 async function getSqlPool(dbName: string): Promise<sql.ConnectionPool> {
     const existing = sqlPools[dbName];
@@ -60,213 +41,184 @@ async function getSqlPool(dbName: string): Promise<sql.ConnectionPool> {
     return connected;
 }
 
-// ===============================
-// PAYLOAD BUILDER
-// ===============================
+function assertProcedureName(procedure: string): string {
+    if (!/^[a-zA-Z0-9_]+$/.test(procedure)) {
+        throw new Error("INVALID_PROCEDURE_NAME");
+    }
+    return procedure;
+}
 
 function buildSqlPayload(
     payload: unknown,
     action: unknown
 ): { ParamObj: SafeObject; FormObj: SafeObject } {
+    const p = (payload ?? {}) as SafeObject;
+    const a = (action ?? {}) as SafeObject;
 
-    const p = (payload || {}) as {
-        params?: SafeObject;
-        data?: SafeObject;
-    };
+    const params =
+        typeof p.params === "object" && p.params !== null
+            ? p.params
+            : typeof a.params === "object" && a.params !== null
+                ? a.params
+                : {};
 
-    const a = (action || {}) as {
-        params?: SafeObject;
-        form?: SafeObject;
-    };
+    const form =
+        typeof p.data === "object" && p.data !== null
+            ? p.data
+            : typeof a.form === "object" && a.form !== null
+                ? a.form
+                : {};
 
     return {
-        ParamObj: p.params ?? a.params ?? {},
-        FormObj: p.data ?? a.form ?? {},
+        ParamObj: params,
+        FormObj: form,
     };
 }
 
-// ===============================
-// DATASET NORMALIZATION
-// ===============================
-
-function normalizeRecordsets(recordsets: unknown[]): DataSet {
-
+function normalizeRecordsets(recordsets: unknown[]): Record<string, unknown[]> {
     const tables: Record<string, unknown[]> = {};
 
     recordsets.forEach((set, index) => {
         tables[`table${index + 1}`] = Array.isArray(set) ? set : [];
     });
 
-    return { tables };
+    return tables;
 }
 
-// ===============================
-// RESULT NORMALIZATION
-// ===============================
-
-function normalizeSqlResult(
-    result: unknown,
-    meta: ResponseMeta
-): EngineResponse {
-
-    const safeResult = result as {
-        recordsets?: unknown[];
-    };
-
-    const recordsets = Array.isArray(safeResult?.recordsets)
-        ? safeResult.recordsets
-        : [];
-
-    const firstRow =
-        (recordsets?.[0] as unknown[])?.[0] as Record<string, unknown> || {};
-
-    const statusCode =
-        typeof firstRow?.StatusCode === "number"
-            ? firstRow.StatusCode
-            : 200;
-
-    const message =
-        typeof firstRow?.Message === "string"
-            ? firstRow.Message
-            : "Success";
-
-    return {
-        status: {
-            code: statusCode,
-            success: statusCode < 400,
-            message,
-        },
-        data: normalizeRecordsets(recordsets),
-        meta,
-        statusCode,
-        message,
-    };
-}
-
-// ===============================
-// ERROR MAPPING
-// ===============================
-
-function mapSqlError(
-    err: unknown,
-    meta: ResponseMeta
-): EngineResponse {
-
+function mapSqlError(err: unknown): { code: string; message: string } {
     const e = err as {
         number?: number;
         originalError?: { info?: { number?: number } };
-        message?: string;
     };
 
     const sqlNumber =
-        e?.number ??
-        e?.originalError?.info?.number;
+        e?.number ?? e?.originalError?.info?.number;
 
     const mapped =
         sqlNumber !== undefined
             ? SQL_ERROR_MAP[String(sqlNumber)]
             : undefined;
 
-    const errorCode = mapped?.code || "E_SQL_EXECUTION_ERROR";
-    const userMessage =
-        mapped?.userMessage ||
-        "Something went wrong while processing your request.";
-
     return {
-        status: {
-            code: 500,
-            success: false,
-            message: userMessage,
-        },
-        error: {
-            code: errorCode,
-            engine: "sql",
-            retryable: mapped?.retryable ?? false,
-            type: mapped?.type || "SYSTEM",
-            message: userMessage,
-            details: err, // internal only
-        },
-        meta,
+        code: mapped?.code || "SQL_EXECUTION_FAILED",
+        message:
+            mapped?.userMessage ||
+            "Database execution failed",
     };
 }
 
-// ===============================
-// MAIN EXECUTOR
-// ===============================
-
 export async function runSqlProcedure(
-    dbName: string,
-    procedure: string,
-    payload: unknown,
-    project: string,
-    action?: unknown,
-    request?: unknown
+    input: ExecutionInput
 ): Promise<EngineResponse> {
-
     const start = Date.now();
 
-    const ctx = (request as {
-        __ctx?: { requestId?: string };
-    })?.__ctx;
-
-    const meta: ResponseMeta = {
-        requestId: ctx?.requestId,
-        timestamp: start,
-        db: "sql",
+    const {
+        ctx,
         procedure,
-        companyDb: dbName,
-    };
+        project,
+        dbName,
+        payload,
+        action,
+    } = input;
+
+    const safeProcedure = assertProcedureName(procedure);
 
     logger.sql({
-        requestId: ctx?.requestId,
+        requestId: ctx.requestId,
         action: "SQL_EXECUTION_START",
         message: "Executing stored procedure",
         project,
-        procedure,
+        procedure: safeProcedure,
         db: dbName,
     });
 
     try {
-
         const pool = await getSqlPool(dbName);
-        const sqlRequest = pool.request();
+        const request = pool.request();
 
         const { ParamObj, FormObj } = buildSqlPayload(payload, action);
 
-        sqlRequest.input("ParamObj", sql.NVarChar(sql.MAX), JSON.stringify(ParamObj));
-        sqlRequest.input("FormObj", sql.NVarChar(sql.MAX), JSON.stringify(FormObj));
+        request.input("ParamObj", sql.NVarChar(sql.MAX), JSON.stringify(ParamObj));
+        request.input("FormObj", sql.NVarChar(sql.MAX), JSON.stringify(FormObj));
 
-        const result = await sqlRequest.execute(`dbo.${procedure}`);
+        const result = await request.execute(`dbo.${safeProcedure}`);
 
-        meta.durationMs = Date.now() - start;
+        const recordsets = Array.isArray(result.recordsets)
+            ? result.recordsets
+            : [];
+
+        const firstRow =
+            (recordsets[0] as unknown[])?.[0] as Record<string, unknown> || {};
+
+        const statusCode =
+            typeof firstRow.StatusCode === "number"
+                ? firstRow.StatusCode
+                : 200;
+
+        const message =
+            typeof firstRow.Message === "string"
+                ? firstRow.Message
+                : "Success";
+
+        const response: EngineResponse = Object.freeze({
+            status: Object.freeze({
+                code: statusCode,
+                success: statusCode < 400,
+                message,
+            }),
+            data: {
+                tables: normalizeRecordsets(recordsets),
+            },
+            meta: Object.freeze({
+                requestId: ctx.requestId,
+                durationMs: Date.now() - start,
+                db: "sql",
+                procedure: safeProcedure,
+                project,
+            }),
+            statusCode,
+            message,
+        });
 
         logger.sql({
-            requestId: ctx?.requestId,
+            requestId: ctx.requestId,
             action: "SQL_EXECUTION_SUCCESS",
-            message: "Stored procedure executed successfully",
-            durationMs: meta.durationMs,
+            message: "Stored procedure executed",
+            durationMs: Date.now() - start,
             project,
-            procedure,
+            procedure: safeProcedure,
             db: dbName,
         });
 
-        return normalizeSqlResult(result, meta);
+        return response;
 
     } catch (err: unknown) {
-
-        meta.durationMs = Date.now() - start;
+        const mapped = mapSqlError(err);
 
         logger.error({
-            requestId: ctx?.requestId,
+            requestId: ctx.requestId,
             engine: "sql",
             action: "SQL_EXECUTION_ERROR",
-            message: "SQL execution failure",
-            project,
-            procedure,
-            db: dbName,
+            message: mapped.message,
             meta: err,
+            project,
+            procedure: safeProcedure,
         });
 
-        return mapSqlError(err, meta);
+        return Object.freeze({
+            status: Object.freeze({
+                code: 500,
+                success: false,
+                message: mapped.message,
+            }),
+            error: Object.freeze({
+                code: mapped.code,
+                message: mapped.message,
+                type: "SYSTEM",
+                retryable: false,
+            }),
+            statusCode: 500,
+            message: mapped.message,
+        });
     }
 }
