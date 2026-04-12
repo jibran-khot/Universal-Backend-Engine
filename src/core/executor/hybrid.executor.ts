@@ -1,219 +1,86 @@
-/**
- * Hybrid Executor
- * ----------------------------------------------------------------------------
- * जिम्मेदारी:
- * - सही execution engine select करना (SQL-first)
- * - execution delegate करना
- * - logging + caching handle करना
- *
- * IMPORTANT:
- * - कोई business logic नहीं
- * - guard पहले ही run.ts में execute हो चुका है
- * - executor सिर्फ execution layer है
- */
-
-import { EngineRequest } from "../contract/request";
 import { EngineResponse } from "../contract/response";
-import { resolveContext } from "../resolver";
 import { runSqlProcedure } from "./sql.executor";
-import { runSupabaseProcedure } from "./supabase.executor";
 import { logger } from "../logger/logger";
 
-// ===============================
-// Types
-// ===============================
+type ExecutionInput = Readonly<{
+    request: Readonly<{
+        project: string;
+        action: unknown;
+    }>;
+    ctx: Readonly<{
+        requestId: string;
+        startTime: number;
+    }>;
+    procedure: string;
+    project: string;
+}>;
 
-type EngineType = "sql" | "supabase";
+type SqlExecutionPayload = Readonly<{
+    dbName: string;
+    payload: unknown;
+}>;
 
-interface ExecutionContext {
-    requestId?: string;
-    engine?: EngineType;
+function assertSqlContext(input: ExecutionInput): SqlExecutionPayload {
+    const action = input.request.action as Record<string, unknown>;
+
+    const dbName = action?.dbName;
+    const payload = action?.payload;
+
+    if (typeof dbName !== "string" || dbName.trim() === "") {
+        throw new Error("INVALID_DB_CONTEXT");
+    }
+
+    return {
+        dbName,
+        payload,
+    };
 }
 
-// ===============================
-// DB MODE CACHE (per project)
-// ===============================
-
-const DB_CACHE: Record<string, EngineType> = {};
-
-// ===============================
-// Main Executor
-// ===============================
-
 export async function runProcedure(
-    input: EngineRequest
+    input: ExecutionInput
 ): Promise<EngineResponse> {
-
     const start = Date.now();
 
-    // Safe context extraction
-    const execCtx: ExecutionContext = (input as unknown as {
-        __ctx?: ExecutionContext;
-    }).__ctx || {};
+    const { request, ctx, procedure, project } = input;
 
-    // Resolve execution context
-    const ctx = resolveContext(input);
-    const { project, dbName, procedure, payload } = ctx;
-
-    // Defensive validation (fail fast)
-    if (!project || !procedure) {
-        throw {
-            type: "INVALID_CONTEXT",
-            message: "Missing project or procedure in execution context",
-        };
-    }
-
-    const cachedMode = DB_CACHE[project];
-
-    // ===============================
-    // 1. Cached SQL Execution
-    // ===============================
-    if (cachedMode === "sql" && dbName) {
-        try {
-            execCtx.engine = "sql";
-
-            const res = await runSqlProcedure(
-                dbName,
-                procedure,
-                payload,
-                project,
-                input.action,
-                input
-            );
-
-            logger.sql({
-                requestId: execCtx.requestId,
-                engine: "sql",
-                action: "HYBRID_SQL_CACHED",
-                message: "SQL execution via cached engine",
-                durationMs: Date.now() - start,
-                project,
-                procedure,
-                db: dbName,
-            });
-
-            return res;
-
-        } catch (err: unknown) {
-
-            logger.error({
-                requestId: execCtx.requestId,
-                engine: "sql",
-                action: "HYBRID_SQL_CACHED_FAILURE",
-                message: "Cached SQL execution failed",
-                project,
-                procedure,
-                db: dbName,
-                meta: err,
-            });
-
-            // fallthrough to fresh SQL attempt
-        }
-    }
-
-    // ===============================
-    // 2. Fresh SQL Execution (Primary)
-    // ===============================
-    if (dbName) {
-        try {
-            execCtx.engine = "sql";
-
-            const res = await runSqlProcedure(
-                dbName,
-                procedure,
-                payload,
-                project,
-                input.action,
-                input
-            );
-
-            // Cache success
-            DB_CACHE[project] = "sql";
-
-            logger.sql({
-                requestId: execCtx.requestId,
-                engine: "sql",
-                action: "HYBRID_SQL_SELECTED",
-                message: "SQL selected as execution engine",
-                durationMs: Date.now() - start,
-                project,
-                procedure,
-                db: dbName,
-            });
-
-            return res;
-
-        } catch (err: unknown) {
-
-            logger.error({
-                requestId: execCtx.requestId,
-                engine: "sql",
-                action: "HYBRID_SQL_FAILURE",
-                message: "SQL execution failed",
-                project,
-                procedure,
-                db: dbName,
-                meta: err,
-            });
-
-            // Since fallback disabled → throw with context
-            throw {
-                type: "SQL_EXECUTION_FAILED",
-                message: "SQL execution failed and no fallback available",
-                meta: err,
-            };
-        }
-    }
-
-    // ===============================
-    // 3. Supabase Fallback (Disabled)
-    // ===============================
-    /*
     try {
-        execCtx.engine = "supabase";
+        const { dbName, payload } = assertSqlContext(input);
 
-        const res = await runSupabaseProcedure(
+        const response = await runSqlProcedure(
+            dbName,
             procedure,
             payload,
             project,
-            input
+            request.action,
+            request
         );
 
-        DB_CACHE[project] = "supabase";
-
-        logger.supabase({
-            requestId: execCtx.requestId,
-            engine: "supabase",
-            action: "HYBRID_SUPABASE_SELECTED",
-            message: "Supabase selected as execution engine",
+        logger.sql({
+            requestId: ctx.requestId,
+            engine: "sql",
+            action: "SQL_EXECUTION_SUCCESS",
+            message: "SQL execution completed",
             durationMs: Date.now() - start,
             project,
             procedure,
+            db: dbName,
         });
 
-        return res;
-
+        return response;
     } catch (err: unknown) {
+        const message =
+            err instanceof Error ? err.message : "SQL_EXECUTION_FAILED";
 
         logger.error({
-            requestId: execCtx.requestId,
-            engine: "supabase",
-            action: "HYBRID_SUPABASE_FAILURE",
-            message: "Supabase execution failed",
+            requestId: ctx.requestId,
+            engine: "sql",
+            action: "SQL_EXECUTION_FAILURE",
+            message,
+            meta: err,
             project,
             procedure,
-            meta: err,
         });
 
-        throw err;
+        throw new Error("SQL_EXECUTION_FAILED");
     }
-    */
-
-    // ===============================
-    // Final Failure
-    // ===============================
-    throw {
-        type: "NO_ENGINE_AVAILABLE",
-        message: "No valid database engine available for execution",
-    };
 }
