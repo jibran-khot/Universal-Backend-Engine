@@ -19,6 +19,7 @@ type ExecutionInput = Readonly<{
     request: SafeRequest;
     ctx: ExecutionContext;
     procedure: string;
+    project: string;
 }>;
 
 function resolveProject(request: EngineRequest): string {
@@ -37,23 +38,27 @@ function resolveProcedure(request: EngineRequest): string {
     return procedure;
 }
 
-function buildContext(request: EngineRequest): ExecutionContext {
+function buildContext(): ExecutionContext {
     const base = createExecutionContext();
 
-    const auth = "auth" in request ? request.auth : undefined;
-    const token = "token" in request ? request.token : undefined;
+    if (
+        !base ||
+        typeof base.requestId !== "string" ||
+        typeof base.startTime !== "number"
+    ) {
+        throw new Error("INVALID_CONTEXT");
+    }
 
     return Object.freeze({
-        ...base,
-        auth,
-        token,
+        requestId: base.requestId,
+        startTime: base.startTime,
     });
 }
 
 function buildExecutionInput(request: EngineRequest): ExecutionInput {
     const project = resolveProject(request);
     const procedure = resolveProcedure(request);
-    const ctx = buildContext(request);
+    const ctx = buildContext();
 
     const safeRequest: SafeRequest = Object.freeze({
         ...request,
@@ -64,11 +69,12 @@ function buildExecutionInput(request: EngineRequest): ExecutionInput {
         request: safeRequest,
         ctx,
         procedure,
+        project,
     });
 }
 
 export async function run(request: EngineRequest) {
-    let input: ExecutionInput;
+    let input: ExecutionInput | null = null;
 
     try {
         input = buildExecutionInput(request);
@@ -77,24 +83,24 @@ export async function run(request: EngineRequest) {
             requestId: input.ctx.requestId,
             action: "API_REQUEST_START",
             message: "Incoming engine request",
-            project: input.request.project,
+            project: input.project,
             procedure: input.procedure,
         });
 
-        guardProcedure(input.request.project, input.procedure);
-
-        const response = await runProcedure({
-            request: input.request,
-            ctx: input.ctx,
+        guardProcedure({
+            project: input.project,
             procedure: input.procedure,
+            requestId: input.ctx.requestId,
         });
+
+        const response = await runProcedure(input);
 
         logger.api({
             requestId: input.ctx.requestId,
             action: "API_RESPONSE_SUCCESS",
             message: "Engine response sent",
             durationMs: Date.now() - input.ctx.startTime,
-            project: input.request.project,
+            project: input.project,
             procedure: input.procedure,
         });
 
@@ -104,7 +110,7 @@ export async function run(request: EngineRequest) {
             err instanceof Error ? err.message : "UNHANDLED_ENGINE_ERROR";
 
         const requestId =
-            input?.ctx?.requestId ?? "UNKNOWN_REQUEST_ID";
+            input?.ctx.requestId ?? "UNKNOWN_REQUEST_ID";
 
         logger.error({
             requestId,

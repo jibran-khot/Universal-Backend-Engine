@@ -1,87 +1,48 @@
-/**
- * ============================================================
- * PROCEDURE VALIDATION GUARD
- * ============================================================
- *
- * Purpose:
- * - Ensure procedure exists in platform registry
- * - Block unknown / unauthorized procedure execution
- * - Prevent invalid SQL calls before resolver
- *
- * Source of truth:
- * platform/<project>/procedures.json
- *
- * Flow:
- * run.ts → guard → resolver → executor
- *
- * Notes:
- * - This is a SECURITY layer
- * - Must be fast and fail early
- */
-
 import { getProcedureDb } from "../resolver/procedure.registry";
 import { logger } from "../logger/logger";
 
-/**
- * ============================================================
- * VALIDATE PROCEDURE ACCESS
- * ============================================================
- *
- * @param project   → project name (multi-tenant support)
- * @param procedure → procedure name requested by client
- *
- * Throws:
- * - INVALID_REQUEST
- * - PROCEDURE_NOT_ALLOWED
- */
-export function guardProcedure(project: string, procedure: string) {
-    /**
-     * STEP 1: BASIC VALIDATION
-     */
-    if (!project || typeof project !== "string") {
-        throw new Error("INVALID_REQUEST: Project name missing");
+type GuardInput = Readonly<{
+    project: string;
+    procedure: string;
+    requestId: string;
+}>;
+
+function assertValidString(value: unknown, code: string): string {
+    if (typeof value !== "string") {
+        throw new Error(code);
     }
 
-    if (!procedure || typeof procedure !== "string") {
-        throw new Error("INVALID_REQUEST: Procedure name missing");
+    const normalized = value.trim();
+
+    if (normalized.length === 0) {
+        throw new Error(code);
     }
+
+    return normalized;
+}
+
+export function guardProcedure(input: GuardInput): void {
+    const project = assertValidString(input.project, "INVALID_PROJECT");
+    const procedure = assertValidString(input.procedure, "INVALID_PROCEDURE");
 
     try {
-        /**
-         * STEP 2: REGISTRY VALIDATION
-         *
-         * Checks if procedure exists in:
-         * platform/<project>/procedures.json
-         */
-        getProcedureDb(project, procedure);
-    } catch (err: any) {
-        /**
-         * STEP 3: LOG BLOCKED ACCESS (IMPORTANT)
-         *
-         * Helps track:
-         * - invalid calls
-         * - potential abuse attempts
-         */
+        const record = getProcedureDb(project, procedure);
+
+        if (!record) {
+            throw new Error("PROCEDURE_NOT_REGISTERED");
+        }
+    } catch (err: unknown) {
         logger.error({
+            requestId: input.requestId,
             engine: "guard",
             action: "PROCEDURE_BLOCKED",
-            message: "Unauthorized procedure access attempt",
+            message: "Unauthorized procedure access",
             meta: {
                 project,
                 procedure,
             },
         });
 
-        /**
-         * STEP 4: THROW STANDARDIZED ERROR
-         */
-        throw new Error(
-            `PROCEDURE_NOT_ALLOWED: Procedure '${procedure}' not registered in project '${project}'`
-        );
+        throw new Error("PROCEDURE_NOT_ALLOWED");
     }
-
-    /**
-     * STEP 5: SUCCESS (NO RETURN NEEDED, BUT KEPT FOR CLARITY)
-     */
-    return true;
 }
