@@ -48,30 +48,37 @@ function assertProcedureName(procedure: string): string {
     return procedure;
 }
 
+function toSafeObject(value: unknown): SafeObject {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return {};
+    }
+
+    return Object.keys(value).reduce<SafeObject>((acc, key) => {
+        acc[key] = (value as Record<string, unknown>)[key];
+        return acc;
+    }, {});
+}
+
 function buildSqlPayload(
     payload: unknown,
     action: unknown
 ): { ParamObj: SafeObject; FormObj: SafeObject } {
-    const p = (payload ?? {}) as SafeObject;
-    const a = (action ?? {}) as SafeObject;
+    const p = (payload ?? {}) as Record<string, unknown>;
+    const a = (action ?? {}) as Record<string, unknown>;
 
-    const params =
-        typeof p.params === "object" && p.params !== null
-            ? p.params
-            : typeof a.params === "object" && a.params !== null
-                ? a.params
-                : {};
+    const ParamObj =
+        p.params !== undefined
+            ? toSafeObject(p.params)
+            : toSafeObject(a.params);
 
-    const form =
-        typeof p.data === "object" && p.data !== null
-            ? p.data
-            : typeof a.form === "object" && a.form !== null
-                ? a.form
-                : {};
+    const FormObj =
+        p.data !== undefined
+            ? toSafeObject(p.data)
+            : toSafeObject(a.form);
 
     return {
-        ParamObj: params,
-        FormObj: form,
+        ParamObj,
+        FormObj,
     };
 }
 
