@@ -2,16 +2,9 @@ import { runProcedure } from "./executor/hybrid.executor";
 import { EngineRequest } from "./contract/request";
 import { guardProcedure } from "./security/procedure.guard";
 import { ENV } from "../config/env";
-import { createExecutionContext } from "./context";
+import { ExecutionContext } from "./context";
 import { logger } from "./logger/logger";
 import { buildError } from "./utils/response.builder";
-
-type ExecutionContext = Readonly<{
-    requestId: string;
-    startTime: number;
-    auth?: unknown;
-    token?: unknown;
-}>;
 
 type SafeRequest = Readonly<EngineRequest & { project: string }>;
 
@@ -22,43 +15,62 @@ type ExecutionInput = Readonly<{
     project: string;
 }>;
 
+type RequestWithMeta = EngineRequest & {
+    __ctx?: ExecutionContext;
+    __auth?: unknown;
+    __token?: unknown;
+};
+
+// ===============================
+// RESOLVERS
+// ===============================
+
 function resolveProject(request: EngineRequest): string {
     const project = request.project ?? ENV.project;
+
     if (typeof project !== "string" || project.trim() === "") {
         throw new Error("INVALID_PROJECT");
     }
+
     return project;
 }
 
 function resolveProcedure(request: EngineRequest): string {
     const procedure = request.action?.procedure;
+
     if (typeof procedure !== "string" || procedure.trim() === "") {
         throw new Error("INVALID_PROCEDURE");
     }
+
     return procedure;
 }
 
-function buildContext(): ExecutionContext {
-    const base = createExecutionContext();
+// ===============================
+// CONTEXT (STRICT PROPAGATION)
+// ===============================
+
+function extractContext(request: RequestWithMeta): ExecutionContext {
+    const ctx = request.__ctx;
 
     if (
-        !base ||
-        typeof base.requestId !== "string" ||
-        typeof base.startTime !== "number"
+        !ctx ||
+        typeof ctx.requestId !== "string" ||
+        typeof ctx.startTime !== "number"
     ) {
-        throw new Error("INVALID_CONTEXT");
+        throw new Error("MISSING_REQUEST_CONTEXT");
     }
 
-    return Object.freeze({
-        requestId: base.requestId,
-        startTime: base.startTime,
-    });
+    return ctx;
 }
 
-function buildExecutionInput(request: EngineRequest): ExecutionInput {
+// ===============================
+// INPUT BUILDER
+// ===============================
+
+function buildExecutionInput(request: RequestWithMeta): ExecutionInput {
     const project = resolveProject(request);
     const procedure = resolveProcedure(request);
-    const ctx = buildContext();
+    const ctx = extractContext(request);
 
     const safeRequest: SafeRequest = Object.freeze({
         ...request,
@@ -73,11 +85,15 @@ function buildExecutionInput(request: EngineRequest): ExecutionInput {
     });
 }
 
+// ===============================
+// RUN
+// ===============================
+
 export async function run(request: EngineRequest) {
     let input: ExecutionInput | null = null;
 
     try {
-        input = buildExecutionInput(request);
+        input = buildExecutionInput(request as RequestWithMeta);
 
         logger.api({
             requestId: input.ctx.requestId,
@@ -109,8 +125,7 @@ export async function run(request: EngineRequest) {
         const message =
             err instanceof Error ? err.message : "UNHANDLED_ENGINE_ERROR";
 
-        const requestId =
-            input?.ctx.requestId ?? "UNKNOWN_REQUEST_ID";
+        const requestId = input?.ctx.requestId ?? "UNKNOWN_REQUEST_ID";
 
         logger.error({
             requestId,

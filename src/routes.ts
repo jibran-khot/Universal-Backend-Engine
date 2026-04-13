@@ -7,11 +7,23 @@ import { ExecutionContext } from "./core/context";
 const router = Router();
 
 // ===============================
-// ASYNC HANDLER
+// TYPES (LOCAL SAFE EXTENSIONS)
+// ===============================
+
+type RequestWithMeta = Request & {
+    __ctx?: ExecutionContext;
+    __auth?: unknown;
+    __token?: unknown;
+};
+
+// ===============================
+// ASYNC HANDLER (STRICT)
 // ===============================
 
 const asyncHandler =
-    (fn: Function) =>
+    (
+        fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+    ) =>
         (req: Request, res: Response, next: NextFunction) =>
             Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -29,19 +41,23 @@ router.post(
         // -------------------------------
         const body = validateRequest(req.body);
 
-        const rawReq = req as unknown as {
-            __ctx?: ExecutionContext;
-            __auth?: unknown;
-            __token?: unknown;
-        };
+        const metaReq = req as RequestWithMeta;
 
-        const mutableBody = body as unknown as Record<string, unknown>;
+        // -------------------------------
+        // STEP 2: BUILD EXECUTION PAYLOAD (IMMUTABLE)
+        // -------------------------------
+        const executionPayload = Object.freeze({
+            ...body,
+            __auth: metaReq.__auth,
+            __token: metaReq.__token,
+            __ctx: metaReq.__ctx,
+        });
 
-        mutableBody.__auth = rawReq.__auth;
-        mutableBody.__token = rawReq.__token;
-        mutableBody.__ctx = rawReq.__ctx;
+        // -------------------------------
+        // STEP 3: EXECUTE
+        // -------------------------------
+        const result = await run(executionPayload);
 
-        const result = await run(body);
         res.status(result.statusCode || 200).json(result);
     })
 );

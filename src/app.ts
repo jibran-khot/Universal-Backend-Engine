@@ -9,6 +9,14 @@ import { ExecutionContext } from "./core/context";
 const app = express();
 
 // ===============================
+// TYPES (LOCAL, NON-INTRUSIVE)
+// ===============================
+
+type RequestWithContext = Request & {
+    __ctx?: ExecutionContext;
+};
+
+// ===============================
 // SECURITY
 // ===============================
 
@@ -26,17 +34,16 @@ app.use(
 );
 
 // ===============================
-// REQUEST CONTEXT (FIXED 🔥)
+// REQUEST CONTEXT (STRICT + IMMUTABLE)
 // ===============================
 
 app.use((req: Request, _res: Response, next: NextFunction) => {
-
-    const ctx: ExecutionContext = {
+    const ctx: ExecutionContext = Object.freeze({
         requestId: uuidv4(),
         startTime: Date.now(),
-    };
+    });
 
-    (req as unknown as { __ctx?: ExecutionContext }).__ctx = ctx;
+    (req as RequestWithContext).__ctx = ctx;
 
     next();
 });
@@ -77,14 +84,12 @@ app.use((_req: Request, res: Response) => {
 });
 
 // ===============================
-// GLOBAL ERROR HANDLER (FIXED 🔥)
+// GLOBAL ERROR HANDLER (STRICT)
 // ===============================
 
 app.use(
     (err: unknown, req: Request, res: Response, _next: NextFunction) => {
-
         const response = handleError(err, req);
-
         res.status(response.statusCode || 500).json(response);
     }
 );

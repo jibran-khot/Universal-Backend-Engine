@@ -30,11 +30,11 @@ export type EngineType =
  * ============================================================
  */
 
-export type ProjectConfig = {
+export type ProjectConfig = Readonly<{
     project: string;
     masterDb?: string;
     clientDb?: string;
-};
+}>;
 
 // ===============================
 // CACHE
@@ -68,7 +68,7 @@ function getProjectConfigPath(project: string): string {
 export function getContext(projectName?: string): ProjectConfig {
     const project = projectName || ENV.project;
 
-    if (!project) {
+    if (!project || typeof project !== "string") {
         throw new Error("CONFIG_ERROR: Project name missing");
     }
 
@@ -77,16 +77,19 @@ export function getContext(projectName?: string): ProjectConfig {
 
         try {
             const raw = fs.readFileSync(filePath, "utf-8");
-            const cfg = JSON.parse(raw) as ProjectConfig;
+            const cfg = JSON.parse(raw) as Partial<ProjectConfig>;
 
-            cache[project] = {
+            cache[project] = Object.freeze({
                 project: cfg.project || project,
                 masterDb: cfg.masterDb,
                 clientDb: cfg.clientDb,
-            };
-        } catch (err: any) {
+            });
+        } catch (err: unknown) {
+            const message =
+                err instanceof Error ? err.message : "UNKNOWN_PARSE_ERROR";
+
             throw new Error(
-                `CONFIG_PARSE_ERROR: Failed to load config for "${project}" → ${err.message}`
+                `CONFIG_PARSE_ERROR: Failed to load config for "${project}" → ${message}`
             );
         }
     }
@@ -98,33 +101,31 @@ export function getContext(projectName?: string): ProjectConfig {
 // EXECUTION CONTEXT
 // ===============================
 
-export type ExecutionContext = {
+export type ExecutionContext = Readonly<{
     requestId: string;
     startTime: number;
 
-    engine?: EngineType; // ✅ FIXED HERE
+    engine?: EngineType;
 
     project?: string;
     tenant?: string;
 
     auth?: AuthContext;
     token?: string;
-};
+}>;
 
 // ===============================
-// CREATE CONTEXT
+// CREATE CONTEXT (STRICT)
 // ===============================
 
-export function createExecutionContext(req?: any): ExecutionContext {
-    return {
+export function createExecutionContext(): ExecutionContext {
+    return Object.freeze({
         requestId: uuid(),
         startTime: Date.now(),
-
-        project: req?.headers?.["x-project"],
-        tenant: req?.headers?.["x-tenant"],
-
         engine: undefined,
+        project: undefined,
+        tenant: undefined,
         auth: undefined,
         token: undefined,
-    };
+    });
 }
