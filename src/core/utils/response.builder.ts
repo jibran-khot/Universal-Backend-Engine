@@ -19,8 +19,35 @@ type SafeError = Readonly<{
     message: string;
 }>;
 
+// ===============================
+// CONSTANTS (STRICT VALIDATION)
+// ===============================
+
+const ERROR_CODES: ReadonlySet<string> = new Set([
+    "INVALID_REQUEST",
+    "INVALID_ACTION",
+    "INVALID_PROCEDURE",
+    "INVALID_PROJECT",
+    "PROCEDURE_NOT_ALLOWED",
+    "AUTH_ERROR",
+    "FORBIDDEN",
+    "NOT_FOUND",
+    "VALIDATION_ERROR",
+    "SQL_EXECUTION_FAILED",
+    "NO_ENGINE_AVAILABLE",
+    "SERVER_ERROR",
+]);
+
+// ===============================
+// HELPERS
+// ===============================
+
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+}
+
+function isErrorCode(value: unknown): value is ErrorCode {
+    return typeof value === "string" && ERROR_CODES.has(value);
 }
 
 function normalizeMeta(meta: unknown): Readonly<Record<string, unknown>> | undefined {
@@ -58,6 +85,9 @@ function resolveStatusCode(code: ErrorCode): number {
 }
 
 function normalizeError(err: unknown): SafeError {
+    // -------------------------------
+    // STANDARD ERROR
+    // -------------------------------
     if (err instanceof Error) {
         return {
             code: "SERVER_ERROR",
@@ -65,25 +95,35 @@ function normalizeError(err: unknown): SafeError {
         };
     }
 
+    // -------------------------------
+    // OBJECT ERROR
+    // -------------------------------
     if (isObject(err)) {
-        const code =
-            typeof err.type === "string"
-                ? (err.type as ErrorCode)
-                : "SERVER_ERROR";
+        const rawCode = err["type"];
+        const code: ErrorCode = isErrorCode(rawCode)
+            ? rawCode
+            : "SERVER_ERROR";
 
         const message =
-            typeof err.message === "string"
-                ? err.message
+            typeof err["message"] === "string"
+                ? (err["message"] as string)
                 : "Internal server error";
 
         return { code, message };
     }
 
+    // -------------------------------
+    // FALLBACK
+    // -------------------------------
     return {
         code: "SERVER_ERROR",
         message: "Internal server error",
     };
 }
+
+// ===============================
+// SUCCESS RESPONSE
+// ===============================
 
 export function buildSuccess<T = unknown>(
     data?: T,
@@ -104,6 +144,10 @@ export function buildSuccess<T = unknown>(
         message,
     });
 }
+
+// ===============================
+// ERROR RESPONSE
+// ===============================
 
 export function buildError(err: unknown): EngineResponse {
     const normalized = normalizeError(err);

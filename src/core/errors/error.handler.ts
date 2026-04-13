@@ -5,29 +5,53 @@
 import { EngineResponse } from "../contract/response";
 import { logger } from "../logger/logger";
 import { buildError } from "../utils/response.builder";
-import { ExecutionContext } from "../context"; // ✅ FIX
+import { ExecutionContext } from "../context";
+
+// ===============================
+// TYPES
+// ===============================
+
+type RequestWithContext = {
+    __ctx?: ExecutionContext;
+};
+
+type ErrorLike = {
+    message?: string;
+};
+
+// ===============================
+// HANDLER
+// ===============================
 
 export function handleError(
     err: unknown,
     request?: unknown
 ): EngineResponse {
 
-    const req = request as {
-        __ctx?: ExecutionContext; // ✅ FIXED TYPE
-    };
-
+    const req = request as RequestWithContext;
     const ctx = req?.__ctx;
 
-    const e = err as { message?: string };
+    const errorObj: ErrorLike =
+        typeof err === "object" && err !== null ? (err as ErrorLike) : {};
+
+    const message =
+        typeof errorObj.message === "string"
+            ? errorObj.message
+            : "UNHANDLED_ERROR";
+
+    const requestId =
+        ctx?.requestId && typeof ctx.requestId === "string"
+            ? ctx.requestId
+            : "UNKNOWN_REQUEST_ID";
 
     // -------------------------------
-    // LOGGING
+    // LOGGING (DETERMINISTIC)
     // -------------------------------
     logger.error({
-        requestId: ctx?.requestId,
-        engine: ctx?.engine, // ✅ now perfectly typed
+        requestId,
+        engine: ctx?.engine,
         action: "ENGINE_ERROR_HANDLER",
-        message: e?.message || "Unhandled error",
+        message,
         meta: err,
     });
 
