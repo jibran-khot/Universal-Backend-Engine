@@ -7,6 +7,10 @@ type GuardInput = Readonly<{
     requestId: string;
 }>;
 
+// ===============================
+// VALIDATION
+// ===============================
+
 function assertValidString(value: unknown, code: string): string {
     if (typeof value !== "string") {
         throw new Error(code);
@@ -21,17 +25,20 @@ function assertValidString(value: unknown, code: string): string {
     return normalized;
 }
 
+// ===============================
+// GUARD
+// ===============================
+
 export function guardProcedure(input: GuardInput): void {
     const project = assertValidString(input.project, "INVALID_PROJECT");
     const procedure = assertValidString(input.procedure, "INVALID_PROCEDURE");
 
-    try {
-        const record = getProcedureDb(project, procedure);
+    const record = getProcedureDb(project, procedure);
 
-        if (!record) {
-            throw new Error("PROCEDURE_NOT_REGISTERED");
-        }
-    } catch (err: unknown) {
+    // -------------------------------
+    // AUTHORIZATION CHECK
+    // -------------------------------
+    if (!record) {
         logger.error({
             requestId: input.requestId,
             engine: "guard",

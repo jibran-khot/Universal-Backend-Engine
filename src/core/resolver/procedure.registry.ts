@@ -17,13 +17,13 @@ import path from "path";
 
 type DbType = "MASTER" | "TENANT";
 
-type ProcedureConfig = {
+type ProcedureConfig = Readonly<{
     db: DbType;
-};
+}>;
 
-type ProceduresFile = {
+type ProceduresFile = Readonly<{
     procedures: Record<string, ProcedureConfig>;
-};
+}>;
 
 // ===============================
 // Cache
@@ -39,43 +39,46 @@ function isDbType(value: unknown): value is DbType {
     return value === "MASTER" || value === "TENANT";
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
 function validateProceduresFile(data: unknown, project: string): ProceduresFile {
 
-    if (!data || typeof data !== "object") {
-        throw {
-            type: "SERVER_ERROR",
-            message: `Invalid procedures.json format for project: ${project}`
-        };
+    if (!isObject(data)) {
+        throw new Error(`Invalid procedures.json format for project: ${project}`);
     }
 
-    const parsed = data as ProceduresFile;
+    const procedures = data["procedures"];
 
-    if (!parsed.procedures || typeof parsed.procedures !== "object") {
-        throw {
-            type: "SERVER_ERROR",
-            message: `Missing 'procedures' object in ${project}/procedures.json`
-        };
+    if (!isObject(procedures)) {
+        throw new Error(`Missing 'procedures' object in ${project}/procedures.json`);
     }
 
-    // Validate each procedure entry
-    for (const [name, config] of Object.entries(parsed.procedures)) {
+    const validatedProcedures: Record<string, ProcedureConfig> = {};
 
-        if (!config || typeof config !== "object") {
-            throw {
-                type: "SERVER_ERROR",
-                message: `Invalid config for procedure '${name}' in project '${project}'`
-            };
+    for (const [name, config] of Object.entries(procedures)) {
+
+        if (!isObject(config)) {
+            throw new Error(
+                `Invalid config for procedure '${name}' in project '${project}'`
+            );
         }
 
-        if (!isDbType(config.db)) {
-            throw {
-                type: "SERVER_ERROR",
-                message: `Invalid DB type for procedure '${name}' in project '${project}'`
-            };
+        const db = config["db"];
+
+        if (!isDbType(db)) {
+            throw new Error(
+                `Invalid DB type for procedure '${name}' in project '${project}'`
+            );
         }
+
+        validatedProcedures[name] = Object.freeze({ db });
     }
 
-    return parsed;
+    return Object.freeze({
+        procedures: validatedProcedures,
+    });
 }
 
 // ===============================
@@ -97,10 +100,7 @@ function loadProcedures(project: string): ProceduresFile {
     );
 
     if (!fs.existsSync(filePath)) {
-        throw {
-            type: "SERVER_ERROR",
-            message: `procedures.json not found for project: ${project}`
-        };
+        throw new Error(`procedures.json not found for project: ${project}`);
     }
 
     let raw: string;
@@ -108,10 +108,7 @@ function loadProcedures(project: string): ProceduresFile {
     try {
         raw = fs.readFileSync(filePath, "utf-8");
     } catch {
-        throw {
-            type: "SERVER_ERROR",
-            message: `Failed to read procedures.json for project: ${project}`
-        };
+        throw new Error(`Failed to read procedures.json for project: ${project}`);
     }
 
     let parsed: unknown;
@@ -119,10 +116,7 @@ function loadProcedures(project: string): ProceduresFile {
     try {
         parsed = JSON.parse(raw);
     } catch {
-        throw {
-            type: "SERVER_ERROR",
-            message: `Invalid JSON in procedures.json for project: ${project}`
-        };
+        throw new Error(`Invalid JSON in procedures.json for project: ${project}`);
     }
 
     const validated = validateProceduresFile(parsed, project);
@@ -146,10 +140,9 @@ export function getProcedureDb(
     const proc = registry.procedures[procedureName];
 
     if (!proc) {
-        throw {
-            type: "PROCEDURE_NOT_ALLOWED",
-            message: `Procedure '${procedureName}' is not registered in project '${project}'`
-        };
+        throw new Error(
+            `Procedure '${procedureName}' is not registered in project '${project}'`
+        );
     }
 
     return proc.db;

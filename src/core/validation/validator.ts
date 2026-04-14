@@ -2,6 +2,10 @@ import { EngineRequest } from "../contract/request";
 
 type UnknownRecord = Record<string, unknown>;
 
+// ===============================
+// TYPE GUARDS
+// ===============================
+
 function isPlainObject(value: unknown): value is UnknownRecord {
     return (
         typeof value === "object" &&
@@ -10,10 +14,24 @@ function isPlainObject(value: unknown): value is UnknownRecord {
     );
 }
 
+// ===============================
+// ASSERTIONS (FAIL FAST)
+// ===============================
+
 function assertPlainObject(value: unknown, code: string): UnknownRecord {
     if (!isPlainObject(value)) {
         throw new Error(code);
     }
+    return value;
+}
+
+function assertOptionalObject(value: unknown, code: string): UnknownRecord | undefined {
+    if (value === undefined) return undefined;
+
+    if (!isPlainObject(value)) {
+        throw new Error(code);
+    }
+
     return value;
 }
 
@@ -31,13 +49,9 @@ function assertString(value: unknown, code: string): string {
     return normalized;
 }
 
-function normalizeObject(value: unknown): Readonly<UnknownRecord> {
-    if (!isPlainObject(value)) {
-        return Object.freeze({});
-    }
-
-    return Object.freeze({ ...value });
-}
+// ===============================
+// VALIDATOR
+// ===============================
 
 export function validateRequest(body: unknown): EngineRequest {
     const root = assertPlainObject(body, "INVALID_REQUEST");
@@ -52,19 +66,40 @@ export function validateRequest(body: unknown): EngineRequest {
         "INVALID_PROCEDURE"
     );
 
-    const params = normalizeObject(actionRaw.params);
-    const form = normalizeObject(actionRaw.form);
-    const auth = normalizeObject(root.auth);
-    const meta = normalizeObject(root.meta);
+    const params = assertOptionalObject(
+        actionRaw.params,
+        "INVALID_REQUEST"
+    );
+
+    const form = assertOptionalObject(
+        actionRaw.form,
+        "INVALID_REQUEST"
+    );
+
+    const auth = assertOptionalObject(
+        root.auth,
+        "INVALID_REQUEST"
+    );
+
+    const meta = assertOptionalObject(
+        root.meta,
+        "INVALID_REQUEST"
+    );
+
+    const project =
+        root.project !== undefined
+            ? assertString(root.project, "INVALID_PROJECT")
+            : undefined;
 
     const request: EngineRequest = Object.freeze({
         action: Object.freeze({
             procedure,
-            params,
-            form,
+            params: params ? Object.freeze({ ...params }) : undefined,
+            form: form ? Object.freeze({ ...form }) : undefined,
         }),
-        auth,
-        meta,
+        auth: auth ? Object.freeze({ ...auth }) : undefined,
+        meta: meta ? Object.freeze({ ...meta }) : undefined,
+        project,
     });
 
     return request;

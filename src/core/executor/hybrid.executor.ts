@@ -20,21 +20,41 @@ type SqlExecutionPayload = Readonly<{
     payload: unknown;
 }>;
 
-function assertSqlContext(input: ExecutionInput): SqlExecutionPayload {
-    const action = input.request.action as Record<string, unknown>;
+// ===============================
+// TYPE GUARD
+// ===============================
 
-    const dbName = action?.dbName;
-    const payload = action?.payload;
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+// ===============================
+// ASSERT SQL CONTEXT (STRICT)
+// ===============================
+
+function assertSqlContext(input: ExecutionInput): SqlExecutionPayload {
+    const action = input.request.action;
+
+    if (!isObject(action)) {
+        throw new Error("INVALID_DB_CONTEXT");
+    }
+
+    const dbName = action["dbName"];
+    const payload = action["payload"];
 
     if (typeof dbName !== "string" || dbName.trim() === "") {
         throw new Error("INVALID_DB_CONTEXT");
     }
 
-    return {
+    return Object.freeze({
         dbName,
         payload,
-    };
+    });
 }
+
+// ===============================
+// EXECUTION
+// ===============================
 
 export async function runProcedure(
     input: ExecutionInput
@@ -67,16 +87,15 @@ export async function runProcedure(
         });
 
         return response;
-    } catch (err: unknown) {
-        const message =
-            err instanceof Error ? err.message : "SQL_EXECUTION_FAILED";
+    } catch (_err: unknown) {
+        // DO NOT leak internal error messages (deterministic output)
 
         logger.error({
             requestId: ctx.requestId,
             engine: "sql",
             action: "SQL_EXECUTION_FAILURE",
-            message,
-            meta: err,
+            message: "SQL_EXECUTION_FAILED",
+            meta: _err,
             project,
             procedure,
         });

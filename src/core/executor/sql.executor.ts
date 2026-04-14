@@ -16,9 +16,13 @@ type ExecutionInput = Readonly<{
     action: unknown;
 }>;
 
-type SafeObject = Record<string, unknown>;
+type SafeObject = Readonly<Record<string, unknown>>;
 
 const sqlPools: Record<string, sql.ConnectionPool> = {};
+
+// ===============================
+// POOL
+// ===============================
 
 async function getSqlPool(dbName: string): Promise<sql.ConnectionPool> {
     const existing = sqlPools[dbName];
@@ -41,6 +45,10 @@ async function getSqlPool(dbName: string): Promise<sql.ConnectionPool> {
     return connected;
 }
 
+// ===============================
+// VALIDATION
+// ===============================
+
 function assertProcedureName(procedure: string): string {
     if (!/^[a-zA-Z0-9_]+$/.test(procedure)) {
         throw new Error("INVALID_PROCEDURE_NAME");
@@ -48,39 +56,60 @@ function assertProcedureName(procedure: string): string {
     return procedure;
 }
 
-function toSafeObject(value: unknown): SafeObject {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return {};
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertObject(value: unknown, code: string): Record<string, unknown> {
+    if (!isObject(value)) {
+        throw new Error(code);
+    }
+    return value;
+}
+
+// ===============================
+// PAYLOAD BUILDER (STRICT)
+// ===============================
+
+function toSafeObject(value: unknown, code: string): SafeObject {
+    const obj = assertObject(value, code);
+
+    const result: Record<string, unknown> = {};
+
+    for (const key of Object.keys(obj)) {
+        result[key] = obj[key];
     }
 
-    return Object.keys(value).reduce<SafeObject>((acc, key) => {
-        acc[key] = (value as Record<string, unknown>)[key];
-        return acc;
-    }, {});
+    return Object.freeze(result);
 }
 
 function buildSqlPayload(
     payload: unknown,
     action: unknown
 ): { ParamObj: SafeObject; FormObj: SafeObject } {
-    const p = (payload ?? {}) as Record<string, unknown>;
-    const a = (action ?? {}) as Record<string, unknown>;
+
+    const p = payload !== undefined ? assertObject(payload, "INVALID_PAYLOAD") : {};
+    const a = assertObject(action, "INVALID_ACTION");
 
     const ParamObj =
-        p.params !== undefined
-            ? toSafeObject(p.params)
-            : toSafeObject(a.params);
+        p["params"] !== undefined
+            ? toSafeObject(p["params"], "INVALID_PARAMS")
+            : toSafeObject(a["params"], "INVALID_PARAMS");
 
     const FormObj =
-        p.data !== undefined
-            ? toSafeObject(p.data)
-            : toSafeObject(a.form);
+        p["data"] !== undefined
+            ? toSafeObject(p["data"], "INVALID_FORM")
+            : toSafeObject(a["form"], "INVALID_FORM");
 
-    return {
+    return Object.freeze({
         ParamObj,
         FormObj,
-    };
+    });
 }
+
+// ===============================
+// HELPERS
+// ===============================
 
 function normalizeRecordsets(recordsets: unknown[]): Record<string, unknown[]> {
     const tables: Record<string, unknown[]> = {};
@@ -114,9 +143,14 @@ function mapSqlError(err: unknown): { code: string; message: string } {
     };
 }
 
+// ===============================
+// EXECUTION
+// ===============================
+
 export async function runSqlProcedure(
     input: ExecutionInput
 ): Promise<EngineResponse> {
+
     const start = Date.now();
 
     const {
@@ -155,16 +189,18 @@ export async function runSqlProcedure(
             : [];
 
         const firstRow =
-            (recordsets[0] as unknown[])?.[0] as Record<string, unknown> || {};
+            Array.isArray(recordsets[0]) && recordsets[0][0] && typeof recordsets[0][0] === "object"
+                ? recordsets[0][0] as Record<string, unknown>
+                : {};
 
         const statusCode =
-            typeof firstRow.StatusCode === "number"
-                ? firstRow.StatusCode
+            typeof firstRow["StatusCode"] === "number"
+                ? firstRow["StatusCode"]
                 : 200;
 
         const message =
-            typeof firstRow.Message === "string"
-                ? firstRow.Message
+            typeof firstRow["Message"] === "string"
+                ? firstRow["Message"]
                 : "Success";
 
         const response: EngineResponse = Object.freeze({
@@ -200,6 +236,7 @@ export async function runSqlProcedure(
         return response;
 
     } catch (err: unknown) {
+
         const mapped = mapSqlError(err);
 
         logger.error({
