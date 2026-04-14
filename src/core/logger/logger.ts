@@ -18,10 +18,10 @@ type EngineType =
 interface LogPayload {
     level: LogLevel;
     timestamp: string;
+    message: string;
     requestId?: string;
     engine?: EngineType;
     action?: string;
-    message: string;
     meta?: unknown;
     durationMs?: number;
     project?: string;
@@ -50,7 +50,7 @@ class Logger {
                 fs.mkdirSync(this.logDir, { recursive: true });
             }
         } catch {
-            // Fail silently (logging should never crash app)
+            // Logging must never crash app
         }
     }
 
@@ -62,7 +62,8 @@ class Logger {
             return JSON.stringify(data);
         } catch {
             return JSON.stringify({
-                error: "LOG_SERIALIZATION_FAILED"
+                level: "ERROR",
+                message: "LOG_SERIALIZATION_FAILED"
             });
         }
     }
@@ -80,22 +81,30 @@ class Logger {
     }
 
     // -------------------------------
-    // Base builder
+    // Base builder (STRICT)
     // -------------------------------
     private base(level: LogLevel, payload: Partial<LogPayload>): LogPayload {
-        return {
+
+        if (typeof payload.message !== "string" || payload.message.trim() === "") {
+            throw new Error("LOGGER_MESSAGE_REQUIRED");
+        }
+
+        const base: LogPayload = {
             level,
             timestamp: new Date().toISOString(),
-            message: payload.message || "",
-            requestId: payload.requestId,
-            engine: payload.engine,
-            action: payload.action,
-            meta: payload.meta,
-            durationMs: payload.durationMs,
-            project: payload.project,
-            procedure: payload.procedure,
-            db: payload.db,
+            message: payload.message,
         };
+
+        if (payload.requestId) base.requestId = payload.requestId;
+        if (payload.engine) base.engine = payload.engine;
+        if (payload.action) base.action = payload.action;
+        if (payload.meta !== undefined) base.meta = payload.meta;
+        if (payload.durationMs !== undefined) base.durationMs = payload.durationMs;
+        if (payload.project) base.project = payload.project;
+        if (payload.procedure) base.procedure = payload.procedure;
+        if (payload.db) base.db = payload.db;
+
+        return base;
     }
 
     // ===============================
