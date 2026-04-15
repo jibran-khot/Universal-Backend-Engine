@@ -2,59 +2,113 @@ import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 
-// Load base .env first
+// ===============================
+// LOAD ENV
+// ===============================
+
 dotenv.config();
+
+// ===============================
+// TYPES
+// ===============================
 
 type DbType = "sqlserver" | "supabase";
 type ProjectType = "ecom" | "school";
 
-// Detect active project
-const activeProject = (process.env.PROJECT || "ecom") as ProjectType;
+// ===============================
+// HELPERS (STRICT VALIDATION)
+// ===============================
 
-// Load project-specific env file
+function assertString(value: unknown, name: string): string {
+    if (typeof value !== "string" || value.trim() === "") {
+        throw new Error(`ENV_ERROR: ${name} is required`);
+    }
+    return value;
+}
+
+function assertNumber(value: unknown, name: string): number {
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+        throw new Error(`ENV_ERROR: ${name} must be a valid number`);
+    }
+    return num;
+}
+
+function assertEnum<T extends string>(
+    value: unknown,
+    allowed: readonly T[],
+    name: string
+): T {
+    if (typeof value !== "string" || !allowed.includes(value as T)) {
+        throw new Error(`ENV_ERROR: ${name} must be one of [${allowed.join(", ")}]`);
+    }
+    return value as T;
+}
+
+// ===============================
+// PROJECT RESOLUTION
+// ===============================
+
+const activeProject = assertEnum<ProjectType>(
+    process.env.PROJECT,
+    ["ecom", "school"],
+    "PROJECT"
+);
+
+// ===============================
+// LOAD PROJECT ENV
+// ===============================
+
 const projectEnvPath = path.join(process.cwd(), `.env.${activeProject}`);
 
 if (fs.existsSync(projectEnvPath)) {
     dotenv.config({ path: projectEnvPath });
-    console.log(`ENV LOADED → ${projectEnvPath}`);
 } else {
-    console.warn(`Project env not found: ${projectEnvPath}`);
+    throw new Error(`ENV_ERROR: Project env not found: ${projectEnvPath}`);
 }
 
-export const ENV = {
-    server: {
-        env: process.env.NODE_ENV || "development",
-        port: Number(process.env.PORT || 5000),
-    },
+// ===============================
+// EXPORT ENV (STRICT)
+// ===============================
 
-    // Active project
+export const ENV = Object.freeze({
+    server: Object.freeze({
+        env: process.env.NODE_ENV || "development",
+        port: assertNumber(process.env.PORT, "PORT"),
+    }),
+
     project: activeProject,
 
-    // Primary DB configuration
-    db: {
-        primary: (process.env.DB_PRIMARY || "sqlserver") as DbType,
+    db: Object.freeze({
+        primary: assertEnum<DbType>(
+            process.env.DB_PRIMARY,
+            ["sqlserver", "supabase"],
+            "DB_PRIMARY"
+        ),
 
-        sqlserver: {
-            host: process.env.DB_HOST || "",
-            port: Number(process.env.DB_PORT || 1433),
+        sqlserver: Object.freeze({
+            host: assertString(process.env.DB_HOST, "DB_HOST"),
+            port: assertNumber(process.env.DB_PORT, "DB_PORT"),
             instance: process.env.DB_INSTANCE || "",
-            name: process.env.DB_NAME || "",
-            user: process.env.DB_USER || "",
-            password: process.env.DB_PASSWORD || "",
-        },
+            name: assertString(process.env.DB_NAME, "DB_NAME"),
+            user: assertString(process.env.DB_USER, "DB_USER"),
+            password: assertString(process.env.DB_PASSWORD, "DB_PASSWORD"),
+        }),
 
-        supabase: {
-            url: process.env.SUPABASE_URL || "",
-            serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-        },
-    },
+        supabase: Object.freeze({
+            url: assertString(process.env.SUPABASE_URL, "SUPABASE_URL"),
+            serviceKey: assertString(
+                process.env.SUPABASE_SERVICE_ROLE_KEY,
+                "SUPABASE_SERVICE_ROLE_KEY"
+            ),
+        }),
+    }),
 
-    /**
-     * ENGINE DB MAPPING
-     * Resolver reads from here
-     */
-    engineDb: {
-        master: process.env.DB_MASTER_NAME || "",
-        tenantDefault: process.env.DB_TENANT_DEFAULT || "",
-    },
-};
+    engineDb: Object.freeze({
+        master: assertString(process.env.DB_MASTER_NAME, "DB_MASTER_NAME"),
+        tenantDefault: assertString(
+            process.env.DB_TENANT_DEFAULT,
+            "DB_TENANT_DEFAULT"
+        ),
+    }),
+});
