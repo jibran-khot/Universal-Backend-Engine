@@ -1,76 +1,64 @@
 import { Request, Response, NextFunction } from "express";
-import { runProcedure } from "../core/executor";
+import { run } from "../core/run";
+import { validateRequest } from "../core/validation/validator";
 
 /* ============================
    TYPES
 ============================ */
 
-export interface DoCrudActionPayload {
+type CrudPayload = {
     project?: string;
     procedure: string;
-    params?: Record<string, any>;
-    form?: Record<string, any>;
-}
+    params?: Record<string, unknown>;
+    form?: Record<string, unknown>;
+};
 
 /* ============================
-   VALIDATORS
+   VALIDATOR (STRICT)
 ============================ */
-
-const validateCrudPayload = (payload: any): boolean => {
-    if (!payload || typeof payload !== "object") return false;
-
-    if (!payload.procedure || typeof payload.procedure !== "string") {
-        return false;
-    }
-
-    if (payload.params && typeof payload.params !== "object") {
-        return false;
-    }
-
-    if (payload.form && typeof payload.form !== "object") {
-        return false;
-    }
-
-    return true;
-};
 
 export const validateCrudRequest = (
     req: Request,
-    res: Response,
+    _res: Response,
     next: NextFunction
 ) => {
-    if (!validateCrudPayload(req.body)) {
-        return res.status(400).json({
-            StatusCode: 400,
-            Message: "Invalid CRUD payload",
-            DataSet: [],
+    try {
+        // reuse engine validator (single source of truth)
+        validateRequest({
+            action: {
+                procedure: req.body?.procedure,
+                params: req.body?.params,
+                form: req.body?.form,
+            },
+            project: req.body?.project,
         });
-    }
 
-    next();
+        next();
+    } catch (err) {
+        next(err);
+    }
 };
 
 /* ============================
-   HANDLER
+   HANDLER (STRICT PIPELINE)
 ============================ */
 
-export const doCrudAction = async (req: Request, res: Response) => {
+export const doCrudAction = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const payload: DoCrudActionPayload = req.body;
+        const payload = req.body as CrudPayload;
 
-        const result = await runProcedure({
+        const result = await run({
+            action: {
+                procedure: payload.procedure,
+                params: payload.params,
+                form: payload.form,
+            },
             project: payload.project,
-            procedure: payload.procedure,
-            params: payload.params || {},
-            form: payload.form || {},
         });
 
-        res.status(200).json(result);
-    } catch (err: any) {
-        res.status(500).json({
-            StatusCode: 500,
-            Message: err.message,
-            DataSet: [],
-        });
+        res.status(result.statusCode || 200).json(result);
+
+    } catch (err: unknown) {
+        next(err);
     }
 };
