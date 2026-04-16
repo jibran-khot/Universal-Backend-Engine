@@ -1,13 +1,24 @@
 import jwt, { SignOptions } from "jsonwebtoken";
 import { TokenPayload } from "./auth.types";
 
-const SECRET = process.env.JWT_SECRET || "engine_secret";
+// ===============================
+// CONSTANTS (STRICT)
+// ===============================
+
+function assertSecret(value: unknown): string {
+    if (typeof value !== "string" || value.trim() === "") {
+        throw new Error("ENV_ERROR: JWT_SECRET is required");
+    }
+    return value;
+}
+
+const SECRET = assertSecret(process.env.JWT_SECRET);
 const ISSUER = "hybrid-db-engine";
 
-/**
- * Sign access token
- * Used after successful login/session creation
- */
+// ===============================
+// SIGN
+// ===============================
+
 export function signToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
 
     const options: SignOptions = {
@@ -18,12 +29,10 @@ export function signToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
     return jwt.sign(payload, SECRET, options);
 }
 
+// ===============================
+// VERIFY
+// ===============================
 
-/**
- * Verify token integrity + expiry
- * Returns decoded payload if valid
- * Throws engine error if invalid
- */
 export function verifyToken(token: string): TokenPayload {
 
     try {
@@ -33,30 +42,34 @@ export function verifyToken(token: string): TokenPayload {
 
         return decoded;
 
-    } catch (err: any) {
+    } catch (err: unknown) {
 
-        if (err.name === "TokenExpiredError") {
-            throw {
-                type: "AUTH_TOKEN_EXPIRED",
-                message: "Token expired"
-            };
+        if (
+            typeof err === "object" &&
+            err !== null &&
+            "name" in err &&
+            err.name === "TokenExpiredError"
+        ) {
+            throw new Error("AUTH_ERROR");
         }
 
-        throw {
-            type: "AUTH_INVALID_TOKEN",
-            message: "Invalid token"
-        };
+        throw new Error("AUTH_ERROR");
     }
 }
 
+// ===============================
+// DECODE (NON-TRUSTED)
+// ===============================
 
-/**
- * Decode token WITHOUT validation
- * Used for logging / debugging / tracing
- */
 export function decodeToken(token: string): TokenPayload | null {
     try {
-        return jwt.decode(token) as TokenPayload;
+        const decoded = jwt.decode(token);
+
+        if (typeof decoded !== "object" || decoded === null) {
+            return null;
+        }
+
+        return decoded as TokenPayload;
     } catch {
         return null;
     }
