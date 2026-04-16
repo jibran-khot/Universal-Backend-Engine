@@ -4,16 +4,26 @@ import { AuthContext } from "./auth.types";
 import { verifyToken } from "./jwt.service";
 import { validateSession } from "./session.validator";
 
-/**
- * Authentication middleware (engine-level)
- * Flow:
- * detect procedure → bypass login → extract token
- * → verify JWT → validate SQL session → attach identity
- */
+// ===============================
+// TYPES
+// ===============================
+
+type RequestWithAuth = Request & {
+    __auth?: AuthContext;
+    __token?: string;
+};
+
+// ===============================
+// CONSTANTS
+// ===============================
 
 const PUBLIC_PROCEDURES = [
-    "auth.login",   // update if your login procedure name differs
+    "auth.login",
 ];
+
+// ===============================
+// MIDDLEWARE
+// ===============================
 
 export async function authMiddleware(
     req: Request,
@@ -22,43 +32,42 @@ export async function authMiddleware(
 ) {
     try {
 
-        const body = req.body as EngineRequest;
-        const procedure = body?.action?.procedure;
+        const requestBody = req.body as EngineRequest;
+        const procedure = requestBody?.action?.procedure;
 
-        if (!procedure) {
-            throw {
-                type: "INVALID_REQUEST",
-                message: "Procedure missing in request"
-            };
+        if (typeof procedure !== "string" || procedure.trim() === "") {
+            throw new Error("INVALID_REQUEST");
         }
+
+        const reqWithAuth = req as RequestWithAuth;
 
         /**
          * PUBLIC PROCEDURE BYPASS
-         * Login, forgot-password etc.
          */
         if (PUBLIC_PROCEDURES.includes(procedure)) {
 
-            const context: AuthContext = {
+            const context: AuthContext = Object.freeze({
                 isAuthenticated: false
-            };
+            });
 
-            (req as any).__auth = context;
+            reqWithAuth.__auth = context;
             return next();
         }
 
         /**
          * TOKEN EXTRACTION
-         * Contract first → header fallback
          */
-        const token =
-            body?.auth?.token ||
-            req.headers["authorization"]?.toString().replace("Bearer ", "");
+        const headerToken =
+            typeof req.headers["authorization"] === "string"
+                ? req.headers["authorization"].replace("Bearer ", "")
+                : undefined;
 
-        if (!token) {
-            throw {
-                type: "AUTH_UNAUTHORIZED",
-                message: "Token missing"
-            };
+        const token =
+            requestBody?.auth?.token ??
+            headerToken;
+
+        if (typeof token !== "string" || token.trim() === "") {
+            throw new Error("AUTH_ERROR");
         }
 
         /**
@@ -67,43 +76,36 @@ export async function authMiddleware(
         const decoded = verifyToken(token);
 
         /**
-         * Resolve project (needed for SQL session validation)
+         * PROJECT RESOLUTION (STRICT)
          */
         const project =
-            body?.project ||
-            decoded?.tenantId ||
-            process.env.PROJECT;
+            requestBody?.project ??
+            decoded?.tenantId;
 
-        /**
-         * SQL SESSION VALIDATION (source of truth)
-         */
-        if (!project) {
-            throw {
-                type: "INVALID_REQUEST",
-                message: "Project/Tenant context missing"
-            };
+        if (typeof project !== "string" || project.trim() === "") {
+            throw new Error("INVALID_PROJECT");
         }
 
-        const identity = await validateSession(token, project as string);
+        /**
+         * SQL SESSION VALIDATION
+         */
+        const identity = await validateSession(token, project);
 
         /**
-         * Build final auth context
+         * BUILD CONTEXT (IMMUTABLE)
          */
-        const context: AuthContext = {
+        const context: AuthContext = Object.freeze({
             isAuthenticated: true,
             identity,
             tokenExp: decoded.exp
-        };
+        });
 
-        /**
-         * Attach to request → consumed by run() → injected into ctx
-         */
-        (req as any).__auth = context;
-        (req as any).__token = token;
+        reqWithAuth.__auth = context;
+        reqWithAuth.__token = token;
 
         next();
 
-    } catch (err) {
+    } catch (err: unknown) {
         next(err);
     }
 }
