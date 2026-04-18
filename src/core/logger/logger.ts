@@ -78,6 +78,7 @@ class Logger {
         fs.promises.appendFile(filePath, line).catch(() => {
             // Never crash app due to logging failure
         });
+        console.log(line);
     }
 
     // -------------------------------

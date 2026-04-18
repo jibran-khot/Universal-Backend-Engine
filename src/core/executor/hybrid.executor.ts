@@ -66,14 +66,14 @@ export async function runProcedure(
     try {
         const { dbName, payload } = assertSqlContext(input);
 
-        const response = await runSqlProcedure(
-            dbName,
+        const response = await runSqlProcedure({
+            ctx,
             procedure,
-            payload,
             project,
-            request.action,
-            request
-        );
+            dbName,
+            payload,
+            action: request.action,
+        });
 
         logger.sql({
             requestId: ctx.requestId,
