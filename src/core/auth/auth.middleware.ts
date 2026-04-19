@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { EngineRequest } from "../contract/request";
 import { AuthContext } from "./auth.types";
-import { verifyToken } from "./jwt.service";
 import { validateSession } from "./session.validator";
 
 // ===============================
@@ -18,7 +17,7 @@ type RequestWithAuth = Request & {
 // ===============================
 
 const PUBLIC_PROCEDURES = [
-    "auth.login",
+    "AdminLoginProc",
 ];
 
 // ===============================
@@ -31,11 +30,17 @@ export async function authMiddleware(
     next: NextFunction
 ) {
     try {
+        console.log("---- AUTH MIDDLEWARE START ----");
 
         const requestBody = req.body as EngineRequest;
+
+        console.log("BODY:", JSON.stringify(requestBody, null, 2));
+
         const procedure = requestBody?.action?.procedure;
+        console.log("PROCEDURE:", procedure);
 
         if (typeof procedure !== "string" || procedure.trim() === "") {
+            console.log("ERROR: INVALID_REQUEST (procedure missing)");
             throw new Error("INVALID_REQUEST");
         }
 
@@ -45,6 +50,7 @@ export async function authMiddleware(
          * PUBLIC PROCEDURE BYPASS
          */
         if (PUBLIC_PROCEDURES.includes(procedure)) {
+            console.log("PUBLIC ROUTE - SKIPPING AUTH");
 
             const context: AuthContext = Object.freeze({
                 isAuthenticated: false
@@ -57,55 +63,71 @@ export async function authMiddleware(
         /**
          * TOKEN EXTRACTION
          */
+        console.log("HEADERS:", req.headers);
+
+        const rawHeader = req.headers["authorization"];
+        console.log("RAW AUTH HEADER:", rawHeader);
+
         const headerToken =
-            typeof req.headers["authorization"] === "string"
-                ? req.headers["authorization"].replace("Bearer ", "")
+            typeof rawHeader === "string"
+                ? rawHeader.replace("Bearer ", "")
                 : undefined;
 
-        const token =
-            requestBody?.auth?.token ??
-            headerToken;
+        console.log("HEADER TOKEN:", headerToken);
+
+        const bodyToken = requestBody?.auth?.token;
+        console.log("BODY TOKEN:", bodyToken);
+
+        const token = bodyToken ?? headerToken;
+
+        console.log("FINAL TOKEN USED:", token);
 
         if (typeof token !== "string" || token.trim() === "") {
+            console.log("ERROR: AUTH_ERROR (token missing)");
             throw new Error("AUTH_ERROR");
         }
 
         /**
-         * JWT VERIFICATION
-         */
-        const decoded = verifyToken(token);
-
-        /**
-         * PROJECT RESOLUTION (STRICT)
+         * PROJECT RESOLUTION
          */
         const project =
             requestBody?.project ??
-            decoded?.tenantId;
+            process.env.PROJECT;
+
+        console.log("PROJECT:", project);
 
         if (typeof project !== "string" || project.trim() === "") {
+            console.log("ERROR: INVALID_PROJECT");
             throw new Error("INVALID_PROJECT");
         }
 
         /**
-         * SQL SESSION VALIDATION
+         * DB SESSION VALIDATION
          */
+        console.log("VALIDATING SESSION...");
+
         const identity = await validateSession(token, project);
 
+        console.log("SESSION VALID:", identity);
+
         /**
-         * BUILD CONTEXT (IMMUTABLE)
+         * BUILD CONTEXT
          */
         const context: AuthContext = Object.freeze({
             isAuthenticated: true,
-            identity,
-            tokenExp: decoded.exp
+            identity
         });
 
         reqWithAuth.__auth = context;
         reqWithAuth.__token = token;
 
+        console.log("AUTH CONTEXT ATTACHED");
+        console.log("---- AUTH MIDDLEWARE END ----");
+
         next();
 
     } catch (err: unknown) {
+        console.log("AUTH MIDDLEWARE ERROR:", err);
         next(err);
     }
 }

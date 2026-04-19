@@ -13,7 +13,7 @@ const router = Router();
 type RequestWithMeta = Request & {
     __ctx?: ExecutionContext;
     __auth?: unknown;
-    __token?: unknown;
+    __token?: string;
 };
 
 // ===============================
@@ -33,18 +33,43 @@ const asyncHandler =
 
 router.post(
     "/run",
-    authMiddleware,
-    asyncHandler(async (req: Request, res: Response) => {
+    asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
 
         // -------------------------------
         // STEP 1: VALIDATE REQUEST
         // -------------------------------
         const body = validateRequest(req.body);
 
-        const metaReq = req as RequestWithMeta;
+        const procedure = body.action.procedure;
+        const flag = body.action.params?.flag;
 
         // -------------------------------
-        // STEP 2: BUILD EXECUTION PAYLOAD (IMMUTABLE)
+        // STEP 2: CONDITIONAL AUTH (STRICT)
+        // -------------------------------
+        const isLogin =
+            procedure === "AdminLoginProc" &&
+            flag === "Login";
+
+        let metaReq = req as RequestWithMeta;
+
+        if (!isLogin) {
+            await authMiddleware(req, res, next);
+
+            metaReq = req as RequestWithMeta;
+
+            // ✅ FORCE TOKEN INTO PARAMS (single source of truth)
+            if (metaReq.__token) {
+                body.action.params = Object.freeze({
+                    ...(body.action.params || {}),
+                    token: metaReq.__token,
+                });
+            } else {
+                throw new Error("AUTH_ERROR");
+            }
+        }
+
+        // -------------------------------
+        // STEP 3: BUILD EXECUTION PAYLOAD (IMMUTABLE)
         // -------------------------------
         const executionPayload = Object.freeze({
             ...body,
@@ -54,7 +79,7 @@ router.post(
         });
 
         // -------------------------------
-        // STEP 3: EXECUTE
+        // STEP 4: EXECUTE
         // -------------------------------
         const result = await run(executionPayload);
 

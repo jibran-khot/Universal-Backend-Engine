@@ -1,6 +1,7 @@
 import { EngineResponse } from "../contract/response";
 import { runSqlProcedure } from "./sql.executor";
 import { logger } from "../logger/logger";
+import { ENV } from "../../config/env";
 
 type ExecutionInput = Readonly<{
     request: Readonly<{
@@ -17,7 +18,10 @@ type ExecutionInput = Readonly<{
 
 type SqlExecutionPayload = Readonly<{
     dbName: string;
-    payload: unknown;
+    payload: {
+        ParamObj: string;
+        FormObj: string;
+    };
 }>;
 
 // ===============================
@@ -29,7 +33,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 // ===============================
-// ASSERT SQL CONTEXT (STRICT)
+// ASSERT SQL CONTEXT (FIXED)
 // ===============================
 
 function assertSqlContext(input: ExecutionInput): SqlExecutionPayload {
@@ -39,16 +43,22 @@ function assertSqlContext(input: ExecutionInput): SqlExecutionPayload {
         throw new Error("INVALID_DB_CONTEXT");
     }
 
-    const dbName = action["dbName"];
-    const payload = action["payload"];
+    const params = isObject(action["params"]) ? action["params"] : {};
+    const form = isObject(action["form"]) ? action["form"] : {};
 
-    if (typeof dbName !== "string" || dbName.trim() === "") {
-        throw new Error("INVALID_DB_CONTEXT");
+    // ✅ DB RESOLUTION (LOGIN → MASTER DB)
+    let dbName = ENV.db.sqlserver.name;
+
+    if (input.procedure === "AdminLoginProc") {
+        dbName = ENV.engineDb.master; // EcomSetup
     }
 
     return Object.freeze({
         dbName,
-        payload,
+        payload: {
+            ParamObj: JSON.stringify(params),
+            FormObj: JSON.stringify(form),
+        },
     });
 }
 
@@ -88,8 +98,6 @@ export async function runProcedure(
 
         return response;
     } catch (_err: unknown) {
-        // DO NOT leak internal error messages (deterministic output)
-
         logger.error({
             requestId: ctx.requestId,
             engine: "sql",
