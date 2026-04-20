@@ -41,23 +41,28 @@ router.post(
         const body = validateRequest(req.body);
 
         const procedure = body.action.procedure;
-        const flag = body.action.params?.flag;
+
+        // ✅ FIX: login detection (removed flag dependency)
+        const isLogin = procedure === "AdminLoginProc";
+
+        let metaReq = req as RequestWithMeta;
 
         // -------------------------------
         // STEP 2: CONDITIONAL AUTH (STRICT)
         // -------------------------------
-        const isLogin =
-            procedure === "AdminLoginProc" &&
-            flag === "Login";
-
-        let metaReq = req as RequestWithMeta;
-
         if (!isLogin) {
-            await authMiddleware(req, res, next);
+
+            // ✅ FIX: proper middleware execution (Promise wrapper)
+            await new Promise<void>((resolve, reject) => {
+                authMiddleware(req, res, (err?: unknown) => {
+                    if (err) return reject(err);
+                    resolve();
+                });
+            });
 
             metaReq = req as RequestWithMeta;
 
-            // ✅ FORCE TOKEN INTO PARAMS (single source of truth)
+            // ✅ TOKEN INJECTION (STRICT)
             if (metaReq.__token) {
                 body.action.params = Object.freeze({
                     ...(body.action.params || {}),
