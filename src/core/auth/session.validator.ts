@@ -20,7 +20,7 @@ export async function validateSession(
             requestId: "AUTH_SESSION",
             startTime: Date.now(),
         },
-        procedure: "AdminLoginProc",
+        procedure: "AdminAuthMeProc",
         project,
         dbName: "EcomSetup",
         payload: { params: { flag: "AuthMe", token } },
@@ -29,6 +29,9 @@ export async function validateSession(
 
     const res = response as SqlResponse;
 
+    // -------------------------------
+    // STEP 1: BASIC SUCCESS CHECK
+    // -------------------------------
     if (!res?.status?.success) {
         throw new Error("AUTH_ERROR");
     }
@@ -39,13 +42,28 @@ export async function validateSession(
         throw new Error("AUTH_ERROR");
     }
 
-    const table1 = tables["table1"];
+    // -------------------------------
+    // STEP 2: FIND FIRST VALID TABLE
+    // -------------------------------
+    let validTable: unknown[] | null = null;
 
-    if (!Array.isArray(table1) || table1.length === 0) {
+    for (const key of Object.keys(tables)) {
+        const table = tables[key];
+
+        if (Array.isArray(table) && table.length > 0) {
+            validTable = table;
+            break;
+        }
+    }
+
+    if (!validTable) {
         throw new Error("AUTH_ERROR");
     }
 
-    const user = table1[0];
+    // -------------------------------
+    // STEP 3: EXTRACT USER
+    // -------------------------------
+    const user = validTable[0];
 
     if (typeof user !== "object" || user === null) {
         throw new Error("AUTH_ERROR");
@@ -53,6 +71,9 @@ export async function validateSession(
 
     const record = user as Record<string, unknown>;
 
+    // -------------------------------
+    // STEP 4: BUILD IDENTITY
+    // -------------------------------
     const identity: AuthIdentity = {
         userId: String(record["AdminID"]),
         sessionId: token,

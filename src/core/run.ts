@@ -46,7 +46,7 @@ function resolveProcedure(request: EngineRequest): string {
 }
 
 // ===============================
-// CONTEXT (STRICT PROPAGATION)
+// CONTEXT
 // ===============================
 
 function extractContext(request: RequestWithMeta): ExecutionContext {
@@ -86,6 +86,50 @@ function buildExecutionInput(request: RequestWithMeta): ExecutionInput {
 }
 
 // ===============================
+// RESPONSE VALIDATION (FIXED)
+// ===============================
+
+function validateSqlResponse(response: any) {
+
+    if (!response) {
+        throw new Error("ENGINE_ERROR: NO_RESPONSE");
+    }
+
+    const tables = response?.data?.tables;
+
+    if (!tables || Object.keys(tables).length === 0) {
+        throw new Error("ENGINE_ERROR: EMPTY_SQL_RESPONSE");
+    }
+
+    // ✅ FIX: find first NON-EMPTY table
+    let validTable: any[] | null = null;
+
+    for (const key of Object.keys(tables)) {
+        const table = tables[key];
+
+        if (Array.isArray(table) && table.length > 0) {
+            validTable = table;
+            break;
+        }
+    }
+
+    if (!validTable) {
+        throw new Error("ENGINE_ERROR: NO_ROWS_RETURNED");
+    }
+
+    const firstRow = validTable[0];
+
+    if (typeof firstRow.StatusCode !== "number") {
+        throw new Error("ENGINE_ERROR: INVALID_SQL_CONTRACT");
+    }
+
+    // ✅ STRICT: propagate SQL error
+    if (firstRow.StatusCode >= 400) {
+        throw new Error(firstRow.Message || "SQL_ERROR");
+    }
+}
+
+// ===============================
 // RUN
 // ===============================
 
@@ -111,6 +155,9 @@ export async function run(request: EngineRequest) {
 
         const response = await runProcedure(input);
 
+        // ✅ FIX APPLIED HERE
+        validateSqlResponse(response);
+
         logger.api({
             requestId: input.ctx.requestId,
             action: "API_RESPONSE_SUCCESS",
@@ -121,6 +168,7 @@ export async function run(request: EngineRequest) {
         });
 
         return response;
+
     } catch (err: unknown) {
         const message =
             err instanceof Error ? err.message : "UNHANDLED_ENGINE_ERROR";

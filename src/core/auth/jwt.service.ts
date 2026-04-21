@@ -2,24 +2,26 @@ import jwt, { SignOptions } from "jsonwebtoken";
 import { TokenPayload } from "./auth.types";
 
 // ===============================
-// CONSTANTS (STRICT)
+// CONSTANTS (LAZY, NON-BLOCKING)
 // ===============================
 
-function assertSecret(value: unknown): string {
-    if (typeof value !== "string" || value.trim() === "") {
-        throw new Error("ENV_ERROR: JWT_SECRET is required");
-    }
-    return value;
-}
-
-const SECRET = assertSecret(process.env.JWT_SECRET);
 const ISSUER = "hybrid-db-engine";
+
+function getSecret(): string | null {
+    const v = process.env.JWT_SECRET;
+    if (typeof v !== "string" || v.trim() === "") return null;
+    return v;
+}
 
 // ===============================
 // SIGN
 // ===============================
 
 export function signToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
+    const SECRET = getSecret();
+    if (!SECRET) {
+        throw new Error("JWT_DISABLED"); // explicit, not ENV_ERROR
+    }
 
     const options: SignOptions = {
         expiresIn: "8h",
@@ -34,25 +36,18 @@ export function signToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
 // ===============================
 
 export function verifyToken(token: string): TokenPayload {
+    const SECRET = getSecret();
+    if (!SECRET) {
+        throw new Error("JWT_DISABLED");
+    }
 
     try {
         const decoded = jwt.verify(token, SECRET, {
-            issuer: ISSUER
+            issuer: ISSUER,
         }) as TokenPayload;
 
         return decoded;
-
-    } catch (err: unknown) {
-
-        if (
-            typeof err === "object" &&
-            err !== null &&
-            "name" in err &&
-            err.name === "TokenExpiredError"
-        ) {
-            throw new Error("AUTH_ERROR");
-        }
-
+    } catch {
         throw new Error("AUTH_ERROR");
     }
 }

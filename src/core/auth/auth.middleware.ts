@@ -61,24 +61,17 @@ export async function authMiddleware(
         }
 
         /**
-         * TOKEN EXTRACTION
+         * TOKEN EXTRACTION (STRICT: HEADER ONLY)
          */
         console.log("HEADERS:", req.headers);
 
         const rawHeader = req.headers["authorization"];
         console.log("RAW AUTH HEADER:", rawHeader);
 
-        const headerToken =
-            typeof rawHeader === "string"
+        const token =
+            typeof rawHeader === "string" && rawHeader.startsWith("Bearer ")
                 ? rawHeader.replace("Bearer ", "")
                 : undefined;
-
-        console.log("HEADER TOKEN:", headerToken);
-
-        const bodyToken = requestBody?.auth?.token;
-        console.log("BODY TOKEN:", bodyToken);
-
-        const token = bodyToken ?? headerToken;
 
         console.log("FINAL TOKEN USED:", token);
 
