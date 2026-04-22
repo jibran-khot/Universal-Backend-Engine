@@ -34,8 +34,8 @@ interface LogPayload {
 // ===============================
 
 class Logger {
-
     private logDir = path.join(process.cwd(), "logs");
+    private isProd = process.env.NODE_ENV === "production";
 
     constructor() {
         this.ensureLogDir();
@@ -50,7 +50,7 @@ class Logger {
                 fs.mkdirSync(this.logDir, { recursive: true });
             }
         } catch {
-            // Logging must never crash app
+            // Never crash app
         }
     }
 
@@ -63,7 +63,7 @@ class Logger {
         } catch {
             return JSON.stringify({
                 level: "ERROR",
-                message: "LOG_SERIALIZATION_FAILED"
+                message: "LOG_SERIALIZATION_FAILED",
             });
         }
     }
@@ -72,28 +72,34 @@ class Logger {
     // Async write (non-blocking)
     // -------------------------------
     private write(file: string, payload: LogPayload) {
-        const filePath = path.join(this.logDir, file);
         const line = this.safeStringify(payload) + "\n";
 
-        fs.promises.appendFile(filePath, line).catch(() => {
-            // Never crash app due to logging failure
-        });
+        // Console (always for free hosting visibility)
         console.log(line);
+
+        // File write (skip if needed for serverless)
+        if (this.isProd) return;
+
+        const filePath = path.join(this.logDir, file);
+
+        fs.promises.appendFile(filePath, line).catch(() => {
+            // Silent fail
+        });
     }
 
     // -------------------------------
-    // Base builder (STRICT)
+    // Base builder (SAFE STRICT)
     // -------------------------------
     private base(level: LogLevel, payload: Partial<LogPayload>): LogPayload {
-
-        if (typeof payload.message !== "string" || payload.message.trim() === "") {
-            throw new Error("LOGGER_MESSAGE_REQUIRED");
-        }
+        const message =
+            typeof payload.message === "string" && payload.message.trim() !== ""
+                ? payload.message
+                : "LOGGER_MESSAGE_MISSING";
 
         const base: LogPayload = {
             level,
             timestamp: new Date().toISOString(),
-            message: payload.message,
+            message,
         };
 
         if (payload.requestId) base.requestId = payload.requestId;

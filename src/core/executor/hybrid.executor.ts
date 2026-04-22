@@ -2,6 +2,7 @@ import { EngineResponse } from "../contract/response";
 import { runSqlProcedure } from "./sql.executor";
 import { logger } from "../logger/logger";
 import { ENV } from "../../config/env";
+import { getProcedureDb } from "../resolver/procedure.registry"; // ✅ ADD
 
 type ExecutionInput = Readonly<{
     request: Readonly<{
@@ -16,50 +17,12 @@ type ExecutionInput = Readonly<{
     project: string;
 }>;
 
-type SqlExecutionPayload = Readonly<{
-    dbName: string;
-    payload: {
-        ParamObj: string;
-        FormObj: string;
-    };
-}>;
-
 // ===============================
-// TYPE GUARD
+// HELPERS
 // ===============================
 
 function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-// ===============================
-// ASSERT SQL CONTEXT (FIXED)
-// ===============================
-
-function assertSqlContext(input: ExecutionInput): SqlExecutionPayload {
-    const action = input.request.action;
-
-    if (!isObject(action)) {
-        throw new Error("INVALID_DB_CONTEXT");
-    }
-
-    const params = isObject(action["params"]) ? action["params"] : {};
-    const form = isObject(action["form"]) ? action["form"] : {};
-
-    // ✅ DB RESOLUTION (LOGIN → MASTER DB)
-    let dbName = ENV.db.sqlserver.name;
-
-    if (input.procedure === "AdminLoginProc") {
-        dbName = ENV.engineDb.master; // EcomSetup
-    }
-
-    return Object.freeze({
-        dbName,
-        payload: {
-            ParamObj: JSON.stringify(params),
-            FormObj: JSON.stringify(form),
-        },
-    });
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ===============================
@@ -74,22 +37,33 @@ export async function runProcedure(
     const { request, ctx, procedure, project } = input;
 
     try {
-        const { dbName, payload } = assertSqlContext(input);
+        if (!isObject(request.action)) {
+            throw new Error("INVALID_ACTION");
+        }
+
+        // ===============================
+        // ✅ FIX: DYNAMIC DB RESOLUTION
+        // ===============================
+        const dbType = getProcedureDb(project, procedure);
+
+        let dbName =
+            dbType === "MASTER"
+                ? ENV.engineDb.master
+                : ENV.db.sqlserver.name;
 
         const response = await runSqlProcedure({
             ctx,
             procedure,
             project,
             dbName,
-            payload,
+            payload: request.action,
             action: request.action,
         });
 
         logger.sql({
             requestId: ctx.requestId,
-            engine: "sql",
-            action: "SQL_EXECUTION_SUCCESS",
-            message: "SQL execution completed",
+            action: "HYBRID_EXECUTION_SUCCESS",
+            message: "Procedure executed via SQL",
             durationMs: Date.now() - start,
             project,
             procedure,
@@ -97,17 +71,22 @@ export async function runProcedure(
         });
 
         return response;
-    } catch (_err: unknown) {
+
+    } catch (err: unknown) {
         logger.error({
             requestId: ctx.requestId,
             engine: "sql",
-            action: "SQL_EXECUTION_FAILURE",
-            message: "SQL_EXECUTION_FAILED",
-            meta: _err,
+            action: "HYBRID_EXECUTION_FAILED",
+            message:
+                err instanceof Error
+                    ? err.message
+                    : "SQL_EXECUTION_FAILED",
+            meta: err,
             project,
             procedure,
+            durationMs: Date.now() - start,
         });
 
-        throw new Error("SQL_EXECUTION_FAILED");
+        throw err;
     }
 }

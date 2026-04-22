@@ -3,11 +3,12 @@ import { validateRequest } from "./core/validation/validator";
 import { run } from "./core/run";
 import { authMiddleware } from "./core/auth/auth.middleware";
 import { ExecutionContext } from "./core/context";
+import { logger } from "./core/logger/logger";
 
 const router = Router();
 
 // ===============================
-// TYPES (LOCAL SAFE EXTENSIONS)
+// TYPES
 // ===============================
 
 type RequestWithMeta = Request & {
@@ -17,7 +18,7 @@ type RequestWithMeta = Request & {
 };
 
 // ===============================
-// ASYNC HANDLER (STRICT)
+// ASYNC HANDLER
 // ===============================
 
 const asyncHandler =
@@ -28,31 +29,41 @@ const asyncHandler =
             Promise.resolve(fn(req, res, next)).catch(next);
 
 // ===============================
+// CONSTANTS
+// ===============================
+
+const LOGIN_PROCEDURES = new Set<string>(["AdminLoginProc"]);
+
+// ===============================
 // POST /api/run
 // ===============================
 
 router.post(
     "/run",
-    asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    asyncHandler(async (req: Request, res: Response) => {
+        const metaReq = req as RequestWithMeta;
+        const ctx = metaReq.__ctx;
 
         // -------------------------------
         // STEP 1: VALIDATE REQUEST
         // -------------------------------
         const body = validateRequest(req.body);
-
         const procedure = body.action.procedure;
 
-        // ✅ FIX: login detection (removed flag dependency)
-        const isLogin = procedure === "AdminLoginProc";
+        const isLogin = LOGIN_PROCEDURES.has(procedure);
 
-        let metaReq = req as RequestWithMeta;
+        logger.info({
+            requestId: ctx?.requestId,
+            message: "REQUEST_VALIDATED",
+            meta: { procedure, isLogin },
+        });
+
+        let finalAction = body.action;
 
         // -------------------------------
-        // STEP 2: CONDITIONAL AUTH (STRICT)
+        // STEP 2: CONDITIONAL AUTH
         // -------------------------------
         if (!isLogin) {
-
-            // ✅ FIX: proper middleware execution (Promise wrapper)
             await new Promise<void>((resolve, reject) => {
                 authMiddleware(req, res, (err?: unknown) => {
                     if (err) return reject(err);
@@ -60,33 +71,44 @@ router.post(
                 });
             });
 
-            metaReq = req as RequestWithMeta;
+            if (!metaReq.__token) {
+                throw new Error("AUTH_TOKEN_MISSING");
+            }
 
-            // ✅ TOKEN INJECTION (STRICT)
-            if (metaReq.__token) {
-                body.action.params = Object.freeze({
+            // ✅ FIX: DO NOT MUTATE → CREATE NEW OBJECT
+            finalAction = Object.freeze({
+                ...body.action,
+                params: Object.freeze({
                     ...(body.action.params || {}),
                     token: metaReq.__token,
-                });
-            } else {
-                throw new Error("AUTH_ERROR");
-            }
+                }),
+            });
         }
 
         // -------------------------------
-        // STEP 3: BUILD EXECUTION PAYLOAD (IMMUTABLE)
+        // STEP 3: BUILD EXECUTION PAYLOAD
         // -------------------------------
         const executionPayload = Object.freeze({
             ...body,
+            action: finalAction, // ✅ FIXED
             __auth: metaReq.__auth,
             __token: metaReq.__token,
-            __ctx: metaReq.__ctx,
+            __ctx: ctx,
         });
 
         // -------------------------------
         // STEP 4: EXECUTE
         // -------------------------------
         const result = await run(executionPayload);
+
+        logger.info({
+            requestId: ctx?.requestId,
+            message: "REQUEST_EXECUTED",
+            meta: {
+                procedure,
+                statusCode: result.statusCode,
+            },
+        });
 
         res.status(result.statusCode || 200).json(result);
     })

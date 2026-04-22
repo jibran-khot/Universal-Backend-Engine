@@ -1,15 +1,12 @@
 /**
  * ============================================================
- * Procedure Registry Loader
+ * Procedure Registry Loader (PRODUCTION SAFE)
  * ============================================================
- *
- * Single source of truth for:
- * - Which procedure is allowed
- * - Which DB it belongs to
  */
 
 import fs from "fs";
 import path from "path";
+import { logger } from "../logger/logger";
 
 // ===============================
 // Types
@@ -43,50 +40,59 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function validateProceduresFile(data: unknown, project: string): ProceduresFile {
+function assertString(value: unknown, code: string): string {
+    if (typeof value !== "string" || value.trim() === "") {
+        throw new Error(code);
+    }
+    return value.trim();
+}
 
+// ===============================
+// VALIDATION
+// ===============================
+
+function validateProceduresFile(
+    data: unknown,
+    project: string
+): ProceduresFile {
     if (!isObject(data)) {
-        throw new Error(`Invalid procedures.json format for project: ${project}`);
+        throw new Error(`INVALID_PROCEDURES_FILE:${project}`);
     }
 
     const procedures = data["procedures"];
 
     if (!isObject(procedures)) {
-        throw new Error(`Missing 'procedures' object in ${project}/procedures.json`);
+        throw new Error(`INVALID_PROCEDURES_OBJECT:${project}`);
     }
 
-    const validatedProcedures: Record<string, ProcedureConfig> = {};
+    const validated: Record<string, ProcedureConfig> = {};
 
     for (const [name, config] of Object.entries(procedures)) {
+        const procName = assertString(name, "INVALID_PROCEDURE_NAME");
 
         if (!isObject(config)) {
-            throw new Error(
-                `Invalid config for procedure '${name}' in project '${project}'`
-            );
+            throw new Error(`INVALID_PROCEDURE_CONFIG:${project}:${procName}`);
         }
 
         const db = config["db"];
 
         if (!isDbType(db)) {
-            throw new Error(
-                `Invalid DB type for procedure '${name}' in project '${project}'`
-            );
+            throw new Error(`INVALID_DB_TYPE:${project}:${procName}`);
         }
 
-        validatedProcedures[name] = Object.freeze({ db });
+        validated[procName] = Object.freeze({ db });
     }
 
     return Object.freeze({
-        procedures: validatedProcedures,
+        procedures: validated,
     });
 }
 
 // ===============================
-// Loader
+// LOADER (CACHED + SAFE)
 // ===============================
 
 function loadProcedures(project: string): ProceduresFile {
-
     if (cachedRegistries[project]) {
         return cachedRegistries[project];
     }
@@ -100,48 +106,50 @@ function loadProcedures(project: string): ProceduresFile {
     );
 
     if (!fs.existsSync(filePath)) {
-        throw new Error(`procedures.json not found for project: ${project}`);
-    }
-
-    let raw: string;
-
-    try {
-        raw = fs.readFileSync(filePath, "utf-8");
-    } catch {
-        throw new Error(`Failed to read procedures.json for project: ${project}`);
+        throw new Error(`PROCEDURE_FILE_NOT_FOUND:${project}`);
     }
 
     let parsed: unknown;
 
     try {
+        const raw = fs.readFileSync(filePath, "utf-8");
         parsed = JSON.parse(raw);
     } catch {
-        throw new Error(`Invalid JSON in procedures.json for project: ${project}`);
+        throw new Error(`PROCEDURE_FILE_INVALID_JSON:${project}`);
     }
 
     const validated = validateProceduresFile(parsed, project);
 
     cachedRegistries[project] = validated;
 
+    logger.info({
+        engine: "system",
+        action: "PROCEDURE_REGISTRY_LOADED",
+        message: "Procedure registry loaded",
+        meta: { project },
+    });
+
     return validated;
 }
 
 // ===============================
-// Public API
+// PUBLIC API
 // ===============================
 
 export function getProcedureDb(
     project: string,
     procedureName: string
 ): DbType {
+    const safeProject = assertString(project, "INVALID_PROJECT");
+    const safeProcedure = assertString(procedureName, "INVALID_PROCEDURE");
 
-    const registry = loadProcedures(project);
+    const registry = loadProcedures(safeProject);
 
-    const proc = registry.procedures[procedureName];
+    const proc = registry.procedures[safeProcedure];
 
     if (!proc) {
         throw new Error(
-            `Procedure '${procedureName}' is not registered in project '${project}'`
+            `PROCEDURE_NOT_REGISTERED:${safeProject}:${safeProcedure}`
         );
     }
 

@@ -7,6 +7,7 @@ type ErrorCode =
     | "INVALID_PROJECT"
     | "PROCEDURE_NOT_ALLOWED"
     | "AUTH_ERROR"
+    | "AUTH_TOKEN_MISSING"
     | "FORBIDDEN"
     | "NOT_FOUND"
     | "VALIDATION_ERROR"
@@ -20,7 +21,7 @@ type SafeError = Readonly<{
 }>;
 
 // ===============================
-// CONSTANTS (STRICT VALIDATION)
+// CONSTANTS
 // ===============================
 
 const ERROR_CODES: ReadonlySet<string> = new Set([
@@ -30,6 +31,7 @@ const ERROR_CODES: ReadonlySet<string> = new Set([
     "INVALID_PROJECT",
     "PROCEDURE_NOT_ALLOWED",
     "AUTH_ERROR",
+    "AUTH_TOKEN_MISSING",
     "FORBIDDEN",
     "NOT_FOUND",
     "VALIDATION_ERROR",
@@ -50,9 +52,19 @@ function isErrorCode(value: unknown): value is ErrorCode {
     return typeof value === "string" && ERROR_CODES.has(value);
 }
 
-function normalizeMeta(meta: unknown): Readonly<Record<string, unknown>> | undefined {
+function normalizeMeta(
+    meta: unknown
+): Readonly<Record<string, unknown>> | undefined {
     if (!isObject(meta)) return undefined;
-    return Object.freeze({ ...meta });
+
+    const clean: Record<string, unknown> = {};
+
+    for (const key of Object.keys(meta)) {
+        if (key === "__proto__" || key === "constructor") continue;
+        clean[key] = meta[key];
+    }
+
+    return Object.freeze(clean);
 }
 
 function resolveStatusCode(code: ErrorCode): number {
@@ -64,6 +76,7 @@ function resolveStatusCode(code: ErrorCode): number {
             return 400;
 
         case "AUTH_ERROR":
+        case "AUTH_TOKEN_MISSING":
             return 401;
 
         case "FORBIDDEN":
@@ -85,21 +98,28 @@ function resolveStatusCode(code: ErrorCode): number {
 }
 
 function normalizeError(err: unknown): SafeError {
-    // -------------------------------
-    // STANDARD ERROR
-    // -------------------------------
-    if (err instanceof Error) {
+    // STRING ERROR (e.g. throw "AUTH_ERROR")
+    if (typeof err === "string") {
         return {
-            code: "SERVER_ERROR",
-            message: err.message || "Internal server error",
+            code: isErrorCode(err) ? err : "SERVER_ERROR",
+            message: err,
         };
     }
 
-    // -------------------------------
+    // STANDARD ERROR
+    if (err instanceof Error) {
+        const msg = err.message || "Internal server error";
+
+        return {
+            code: isErrorCode(msg) ? msg : "SERVER_ERROR",
+            message: msg,
+        };
+    }
+
     // OBJECT ERROR
-    // -------------------------------
     if (isObject(err)) {
-        const rawCode = err["type"];
+        const rawCode = err["code"] ?? err["type"];
+
         const code: ErrorCode = isErrorCode(rawCode)
             ? rawCode
             : "SERVER_ERROR";
@@ -112,9 +132,6 @@ function normalizeError(err: unknown): SafeError {
         return { code, message };
     }
 
-    // -------------------------------
-    // FALLBACK
-    // -------------------------------
     return {
         code: "SERVER_ERROR",
         message: "Internal server error",

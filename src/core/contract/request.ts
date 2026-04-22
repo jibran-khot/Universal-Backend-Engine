@@ -1,32 +1,8 @@
 /**
  * ============================= UNIVERSAL REQUEST CONTRACT =============================
- *
- * Ye file backend engine ka ENTRY GATE hai.
- * Angular / client jo bhi request bhejega — wo isi structure me hoga.
- *
- * Backend flow:
- *
- * Angular / Client
- *        ↓
- * Request Contract (ye file)
- *        ↓
- * DB Resolver (decide karega kaunsa DB hit hoga)
- *        ↓
- * SQL Executor (stored procedure execute karega)
- *        ↓
- * SQL Server
- *
- * Purpose:
- * - Har project same request structure use kare
- * - Multi-tenant support (companyDb switching)
- * - Auth + metadata + procedure ek standard format me aaye
- * - Future me modules add ho sake bina breaking change ke
- *
- * Ye sirf TYPE definition hai — koi business logic nahi.
- *
+ * PRODUCTION SAFE + EXTENSIBLE
  * =============================================================================
  */
-
 
 /* -------------------------------------------------------------------------- */
 /* META SECTION                                                               */
@@ -39,7 +15,6 @@ export interface RequestMeta {
     source?: string;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* AUTH SECTION                                                               */
 /* -------------------------------------------------------------------------- */
@@ -50,50 +25,44 @@ export interface RequestAuth {
     userId?: string;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* ACTION SECTION                                                             */
 /* -------------------------------------------------------------------------- */
 
 export interface RequestAction {
-
     procedure: string;
 
-    params?: Record<string, unknown>;
+    params?: Readonly<Record<string, unknown>>;
 
-    form?: Record<string, unknown>;
+    form?: Readonly<Record<string, unknown>>;
 
     /**
-     * Future:
-     * admin/dev tools ke liye direct SQL
+     * Future: admin/dev tools
      */
     inlineSQL?: string;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* BACKWARD COMPATIBILITY                                                     */
 /* -------------------------------------------------------------------------- */
 
 export interface EnginePayload {
-    params?: Record<string, unknown>;
-    data?: Record<string, unknown>;
+    params?: Readonly<Record<string, unknown>>;
+    data?: Readonly<Record<string, unknown>>;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* MAIN REQUEST OBJECT                                                        */
 /* -------------------------------------------------------------------------- */
 
 export interface EngineRequest {
-
     project?: string;
 
-    meta?: RequestMeta;
+    meta?: Readonly<RequestMeta>;
 
-    auth?: RequestAuth;
+    auth?: Readonly<RequestAuth>;
 
-    action: RequestAction;
+    action: Readonly<RequestAction>;
 
-    payload?: EnginePayload;
+    payload?: Readonly<EnginePayload>;
 }

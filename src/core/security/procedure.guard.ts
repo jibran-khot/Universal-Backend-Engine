@@ -52,4 +52,18 @@ export function guardProcedure(input: GuardInput): void {
 
         throw new Error("PROCEDURE_NOT_ALLOWED");
     }
+
+    // -------------------------------
+    // SUCCESS LOG (TRACEABILITY)
+    // -------------------------------
+    logger.debug({
+        requestId: input.requestId,
+        engine: "guard",
+        action: "PROCEDURE_ALLOWED",
+        message: "Procedure access granted",
+        meta: {
+            project,
+            procedure,
+        },
+    });
 }

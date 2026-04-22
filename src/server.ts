@@ -1,43 +1,77 @@
 import "dotenv/config";
 
-console.log("STEP 1: server.ts loaded");
-
 import app from "./app";
-
-console.log("STEP 2: app imported");
-
 import { logger } from "./core/logger/logger";
 import { ENV } from "./config/env";
 
-console.log("STEP 3: env loaded");
+// ===============================
+// SERVER CONFIG
+// ===============================
+
+const PORT = ENV.server.port || 3000;
+
+// ===============================
+// PROCESS LEVEL SAFETY
+// ===============================
+
+process.on("uncaughtException", (error: Error) => {
+    logger.error({
+        message: "UNCAUGHT_EXCEPTION",
+        meta: error, // ✅ FIXED
+    });
+
+    process.exit(1);
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+    logger.error({
+        message: "UNHANDLED_REJECTION",
+        meta: reason, // ✅ FIXED
+    });
+
+    process.exit(1);
+});
 
 // ===============================
 // SERVER START
 // ===============================
 
-const PORT = ENV.server.port;
-
-console.log("STEP 4: before logger boot");
-
-logger.info({
-    message: "SERVER_BOOT",
-    meta: {
-        port: PORT,
-        env: ENV.server.env,
-        project: ENV.project,
-    },
-});
-
-console.log("STEP 5: before listen");
-
-app.listen(PORT, () => {
-    console.log("STEP 6: listen callback reached");
-    console.log(`SERVER STARTED (console fallback) on port ${PORT}`);
-
+const server = app.listen(PORT, () => {
     logger.info({
         message: "SERVER_STARTED",
         meta: {
             port: PORT,
+            env: ENV.server.env,
+            project: ENV.project,
         },
     });
 });
+
+// ===============================
+// GRACEFUL SHUTDOWN
+// ===============================
+
+const shutdown = (signal: string) => {
+    logger.warn({
+        message: "SHUTDOWN_INITIATED",
+        meta: { signal },
+    });
+
+    server.close(() => {
+        logger.info({
+            message: "SERVER_CLOSED",
+        });
+
+        process.exit(0);
+    });
+
+    setTimeout(() => {
+        logger.error({
+            message: "FORCE_SHUTDOWN",
+        });
+        process.exit(1);
+    }, 10000);
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

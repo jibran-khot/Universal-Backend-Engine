@@ -22,7 +22,7 @@ type RequestWithMeta = EngineRequest & {
 };
 
 // ===============================
-// RESOLVERS
+// RESOLVERS (STRICT + SAFE)
 // ===============================
 
 function resolveProject(request: EngineRequest): string {
@@ -32,7 +32,7 @@ function resolveProject(request: EngineRequest): string {
         throw new Error("INVALID_PROJECT");
     }
 
-    return project;
+    return project.trim();
 }
 
 function resolveProcedure(request: EngineRequest): string {
@@ -42,11 +42,11 @@ function resolveProcedure(request: EngineRequest): string {
         throw new Error("INVALID_PROCEDURE");
     }
 
-    return procedure;
+    return procedure.trim();
 }
 
 // ===============================
-// CONTEXT
+// CONTEXT (STRICT)
 // ===============================
 
 function extractContext(request: RequestWithMeta): ExecutionContext {
@@ -64,7 +64,7 @@ function extractContext(request: RequestWithMeta): ExecutionContext {
 }
 
 // ===============================
-// INPUT BUILDER
+// INPUT BUILDER (IMMUTABLE)
 // ===============================
 
 function buildExecutionInput(request: RequestWithMeta): ExecutionInput {
@@ -86,27 +86,24 @@ function buildExecutionInput(request: RequestWithMeta): ExecutionInput {
 }
 
 // ===============================
-// RESPONSE VALIDATION (FIXED)
+// RESPONSE VALIDATION (STRICT CONTRACT)
 // ===============================
 
 function validateSqlResponse(response: any) {
-
     if (!response) {
-        throw new Error("ENGINE_ERROR: NO_RESPONSE");
+        throw new Error("ENGINE_ERROR:NO_RESPONSE");
     }
 
     const tables = response?.data?.tables;
 
-    if (!tables || Object.keys(tables).length === 0) {
-        throw new Error("ENGINE_ERROR: EMPTY_SQL_RESPONSE");
+    if (!tables || typeof tables !== "object") {
+        throw new Error("ENGINE_ERROR:INVALID_TABLES");
     }
 
-    // ✅ FIX: find first NON-EMPTY table
     let validTable: any[] | null = null;
 
     for (const key of Object.keys(tables)) {
         const table = tables[key];
-
         if (Array.isArray(table) && table.length > 0) {
             validTable = table;
             break;
@@ -114,27 +111,27 @@ function validateSqlResponse(response: any) {
     }
 
     if (!validTable) {
-        throw new Error("ENGINE_ERROR: NO_ROWS_RETURNED");
+        throw new Error("ENGINE_ERROR:NO_ROWS_RETURNED");
     }
 
     const firstRow = validTable[0];
 
-    if (typeof firstRow.StatusCode !== "number") {
-        throw new Error("ENGINE_ERROR: INVALID_SQL_CONTRACT");
+    if (typeof firstRow?.StatusCode !== "number") {
+        throw new Error("ENGINE_ERROR:INVALID_SQL_CONTRACT");
     }
 
-    // ✅ STRICT: propagate SQL error
     if (firstRow.StatusCode >= 400) {
         throw new Error(firstRow.Message || "SQL_ERROR");
     }
 }
 
 // ===============================
-// RUN
+// RUN (CORE ENGINE ENTRY)
 // ===============================
 
 export async function run(request: EngineRequest) {
     let input: ExecutionInput | null = null;
+    const startTime = Date.now();
 
     try {
         input = buildExecutionInput(request as RequestWithMeta);
@@ -147,15 +144,22 @@ export async function run(request: EngineRequest) {
             procedure: input.procedure,
         });
 
+        // ===============================
+        // SECURITY: PROCEDURE GUARD
+        // ===============================
+
         guardProcedure({
             project: input.project,
             procedure: input.procedure,
             requestId: input.ctx.requestId,
         });
 
+        // ===============================
+        // EXECUTION
+        // ===============================
+
         const response = await runProcedure(input);
 
-        // ✅ FIX APPLIED HERE
         validateSqlResponse(response);
 
         logger.api({
@@ -180,6 +184,7 @@ export async function run(request: EngineRequest) {
             engine: "api",
             action: "API_EXECUTION_ERROR",
             message,
+            durationMs: Date.now() - startTime,
             meta: err,
         });
 

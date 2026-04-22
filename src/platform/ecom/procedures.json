@@ -6,7 +6,10 @@
     "AdminLoginProc": {
       "db": "MASTER"
     },
-    "GetDashboardData":{
+    "AdminAuthMeProc": {
+      "db": "MASTER"
+    },
+    "GetDashboardData": {
       "db": "TENANT"
     },
     "GetProducts": {

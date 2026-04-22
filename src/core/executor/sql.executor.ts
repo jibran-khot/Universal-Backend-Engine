@@ -21,22 +21,28 @@ type SafeObject = Readonly<Record<string, unknown>>;
 const sqlPools: Record<string, sql.ConnectionPool> = {};
 
 // ===============================
-// POOL
+// POOL (OPTIMIZED + SAFE REUSE)
 // ===============================
 
 async function getSqlPool(dbName: string): Promise<sql.ConnectionPool> {
     const existing = sqlPools[dbName];
 
-    if (existing?.connected) return existing;
+    if (existing && existing.connected) return existing;
 
     if (existing) {
-        try { await existing.close(); } catch { }
+        try {
+            await existing.close();
+        } catch { }
         delete sqlPools[dbName];
     }
 
     const pool = new sql.ConnectionPool({
         ...SQL_CONFIG,
         database: dbName,
+        options: {
+            enableArithAbort: true,
+            trustServerCertificate: true,
+        },
     });
 
     const connected = await pool.connect();
@@ -68,14 +74,13 @@ function assertObject(value: unknown, code: string): Record<string, unknown> {
 }
 
 // ===============================
-// PAYLOAD BUILDER (STRICT)
+// PAYLOAD BUILDER (STRICT IMMUTABLE)
 // ===============================
 
 function toSafeObject(value: unknown, code: string): SafeObject {
     const obj = assertObject(value, code);
 
     const result: Record<string, unknown> = {};
-
     for (const key of Object.keys(obj)) {
         result[key] = obj[key];
     }
@@ -87,7 +92,6 @@ function buildSqlPayload(
     payload: unknown,
     action: unknown
 ): { ParamObj: SafeObject; FormObj: SafeObject } {
-
     const p = payload !== undefined ? assertObject(payload, "INVALID_PAYLOAD") : {};
     const a = assertObject(action, "INVALID_ACTION");
 
@@ -144,13 +148,12 @@ function mapSqlError(err: unknown): { code: string; message: string } {
 }
 
 // ===============================
-// EXECUTION
+// EXECUTION (PRODUCTION SAFE)
 // ===============================
 
 export async function runSqlProcedure(
     input: ExecutionInput
 ): Promise<EngineResponse> {
-
     const start = Date.now();
 
     const {
@@ -177,7 +180,20 @@ export async function runSqlProcedure(
         const pool = await getSqlPool(dbName);
         const request = pool.request();
 
-        const { ParamObj, FormObj } = buildSqlPayload(payload, action);
+        // ===============================
+        // FIX: ENSURE CORRECT PAYLOAD SHAPE
+        // ===============================
+
+        const normalizedPayload = {
+            params: (payload as any)?.params ?? (action as any)?.params ?? {},
+            data: (payload as any)?.data ?? (action as any)?.form ?? {},
+        };
+
+        // 🔍 DEBUG (temporary)
+        console.log("PARAMOBJ:", normalizedPayload.params);
+        console.log("FORMOBJ:", normalizedPayload.data);
+
+        const { ParamObj, FormObj } = buildSqlPayload(normalizedPayload, action);
 
         request.input("ParamObj", sql.NVarChar(sql.MAX), JSON.stringify(ParamObj));
         request.input("FormObj", sql.NVarChar(sql.MAX), JSON.stringify(FormObj));
@@ -189,8 +205,10 @@ export async function runSqlProcedure(
             : [];
 
         const firstRow =
-            Array.isArray(recordsets[0]) && recordsets[0][0] && typeof recordsets[0][0] === "object"
-                ? recordsets[0][0] as Record<string, unknown>
+            Array.isArray(recordsets[0]) &&
+                recordsets[0][0] &&
+                typeof recordsets[0][0] === "object"
+                ? (recordsets[0][0] as Record<string, unknown>)
                 : {};
 
         const statusCode =
@@ -236,7 +254,6 @@ export async function runSqlProcedure(
         return response;
 
     } catch (err: unknown) {
-
         const mapped = mapSqlError(err);
 
         logger.error({

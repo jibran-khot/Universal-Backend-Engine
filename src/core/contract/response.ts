@@ -1,15 +1,6 @@
 /**
  * ============================= UNIVERSAL RESPONSE CONTRACT =============================
- *
- * PURPOSE:
- * - Backend → Frontend communication standard
- * - Stable structure across SQL / Supabase / API
- * - Ensures frontend never depends on DB-specific format
- *
- * IMPORTANT RULE:
- * - "status" is the source of truth
- * - "statusCode/message" are backward compatibility only
- *
+ * PRODUCTION SAFE + STRICT IMMUTABILITY
  * =============================================================================
  */
 
@@ -18,11 +9,10 @@
 /* -------------------------------------------------------------------------- */
 
 export interface ResponseStatus {
-    readonly code: number;        // HTTP-like status
-    readonly success: boolean;    // true/false
-    readonly message: string;     // user-readable message
+    readonly code: number;
+    readonly success: boolean;
+    readonly message: string;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* ERROR STRUCTURE                                                            */
@@ -37,100 +27,55 @@ export type ErrorType =
     | "AUTH";
 
 export interface ResponseError {
-    code: string;
-    message: string;
+    readonly code: string;
+    readonly message: string;
 
-    /**
-     * Error classification
-     */
-    engine?: ErrorEngine;
-    type?: ErrorType;
+    readonly engine?: ErrorEngine;
+    readonly type?: ErrorType;
 
-    /**
-     * Retry hint (future circuit breaker use)
-     */
-    retryable?: boolean;
+    readonly retryable?: boolean;
 
-    /**
-     * Debug / internal (never expose blindly to frontend)
-     */
-    details?: unknown;
+    readonly details?: unknown;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* DATASET STRUCTURE                                                          */
 /* -------------------------------------------------------------------------- */
 
 export interface DataSet {
-    /**
-     * Multi-table result (SQL style)
-     * Example: { users: [], orders: [] }
-     */
-    tables?: Record<string, unknown[]>;
-
-    /**
-     * Single result / scalar / array
-     */
-    data?: unknown;
-
-    /**
-     * Output params (stored procedures)
-     */
-    output?: Record<string, unknown>;
+    readonly tables?: Readonly<Record<string, unknown[]>>;
+    readonly data?: unknown;
+    readonly output?: Readonly<Record<string, unknown>>;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* META INFORMATION                                                           */
 /* -------------------------------------------------------------------------- */
 
 export interface ResponseMeta {
-    requestId?: string;
-    timestamp?: number;
-    durationMs?: number;
+    readonly requestId?: string;
+    readonly timestamp?: number;
+    readonly durationMs?: number;
 
-    /**
-     * Execution tracking
-     */
-    db?: "sql" | "supabase";
-    companyDb?: string;
-    procedure?: string;
+    readonly db?: "sql" | "supabase";
+    readonly companyDb?: string;
+    readonly procedure?: string;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* MAIN RESPONSE OBJECT                                                       */
 /* -------------------------------------------------------------------------- */
 
 export interface EngineResponse<T = unknown> {
+    readonly status: ResponseStatus;
 
-    /**
-     * SOURCE OF TRUTH
-     */
-    status: ResponseStatus;
+    readonly data?: T | DataSet;
 
-    /**
-     * Data payload
-     */
-    data?: T | DataSet;
+    readonly error?: ResponseError;
 
-    /**
-     * Error object (only when success=false)
-     */
-    error?: ResponseError;
+    readonly meta?: ResponseMeta;
 
-    /**
-     * Observability / tracing
-     */
-    meta?: ResponseMeta;
-
-    /**
-     * ----------------------------------------------------------------------
-     * BACKWARD COMPATIBILITY (DO NOT USE IN NEW CODE)
-     * ----------------------------------------------------------------------
-     */
-
-    statusCode?: number;
-    message?: string;
+    // backward compatibility
+    readonly statusCode?: number;
+    readonly message?: string;
 }

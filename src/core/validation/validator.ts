@@ -25,7 +25,10 @@ function assertPlainObject(value: unknown, code: string): UnknownRecord {
     return value;
 }
 
-function assertOptionalObject(value: unknown, code: string): UnknownRecord | undefined {
+function assertOptionalObject(
+    value: unknown,
+    code: string
+): UnknownRecord | undefined {
     if (value === undefined) return undefined;
 
     if (!isPlainObject(value)) {
@@ -50,6 +53,25 @@ function assertString(value: unknown, code: string): string {
 }
 
 // ===============================
+// SANITIZER (SHALLOW IMMUTABLE COPY)
+// ===============================
+
+function sanitizeObject(obj: UnknownRecord): UnknownRecord {
+    const clean: UnknownRecord = {};
+
+    for (const key of Object.keys(obj)) {
+        const value = obj[key];
+
+        // prevent prototype pollution
+        if (key === "__proto__" || key === "constructor") continue;
+
+        clean[key] = value;
+    }
+
+    return Object.freeze(clean);
+}
+
+// ===============================
 // VALIDATOR
 // ===============================
 
@@ -68,22 +90,22 @@ export function validateRequest(body: unknown): EngineRequest {
 
     const params = assertOptionalObject(
         actionRaw.params,
-        "INVALID_REQUEST"
+        "INVALID_PARAMS"
     );
 
     const form = assertOptionalObject(
         actionRaw.form,
-        "INVALID_REQUEST"
+        "INVALID_FORM"
     );
 
     const auth = assertOptionalObject(
         root.auth,
-        "INVALID_REQUEST"
+        "INVALID_AUTH"
     );
 
     const meta = assertOptionalObject(
         root.meta,
-        "INVALID_REQUEST"
+        "INVALID_META"
     );
 
     const project =
@@ -94,11 +116,11 @@ export function validateRequest(body: unknown): EngineRequest {
     const request: EngineRequest = Object.freeze({
         action: Object.freeze({
             procedure,
-            params: params ? Object.freeze({ ...params }) : undefined,
-            form: form ? Object.freeze({ ...form }) : undefined,
+            params: params ? sanitizeObject(params) : undefined,
+            form: form ? sanitizeObject(form) : undefined,
         }),
-        auth: auth ? Object.freeze({ ...auth }) : undefined,
-        meta: meta ? Object.freeze({ ...meta }) : undefined,
+        auth: auth ? sanitizeObject(auth) : undefined,
+        meta: meta ? sanitizeObject(meta) : undefined,
         project,
     });
 

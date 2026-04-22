@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { EngineRequest } from "../contract/request";
 import { AuthContext } from "./auth.types";
 import { validateSession } from "./session.validator";
+import { logger } from "../logger/logger";
 
 // ===============================
 // TYPES
@@ -10,15 +11,28 @@ import { validateSession } from "./session.validator";
 type RequestWithAuth = Request & {
     __auth?: AuthContext;
     __token?: string;
+    __ctx?: { requestId?: string };
 };
 
 // ===============================
 // CONSTANTS
 // ===============================
 
-const PUBLIC_PROCEDURES = [
+const PUBLIC_PROCEDURES = new Set<string>([
     "AdminLoginProc",
-];
+]);
+
+// ===============================
+// HELPERS
+// ===============================
+
+function extractToken(header: unknown): string | null {
+    if (typeof header !== "string") return null;
+    if (!header.startsWith("Bearer ")) return null;
+
+    const token = header.slice(7).trim();
+    return token.length > 0 ? token : null;
+}
 
 // ===============================
 // MIDDLEWARE
@@ -29,98 +43,94 @@ export async function authMiddleware(
     _res: Response,
     next: NextFunction
 ) {
+    const metaReq = req as RequestWithAuth;
+    const requestId = metaReq.__ctx?.requestId;
+
     try {
-        console.log("---- AUTH MIDDLEWARE START ----");
-
         const requestBody = req.body as EngineRequest;
-
-        console.log("BODY:", JSON.stringify(requestBody, null, 2));
-
         const procedure = requestBody?.action?.procedure;
-        console.log("PROCEDURE:", procedure);
 
         if (typeof procedure !== "string" || procedure.trim() === "") {
-            console.log("ERROR: INVALID_REQUEST (procedure missing)");
             throw new Error("INVALID_REQUEST");
         }
 
-        const reqWithAuth = req as RequestWithAuth;
-
-        /**
-         * PUBLIC PROCEDURE BYPASS
-         */
-        if (PUBLIC_PROCEDURES.includes(procedure)) {
-            console.log("PUBLIC ROUTE - SKIPPING AUTH");
-
+        // ===============================
+        // PUBLIC ROUTE BYPASS
+        // ===============================
+        if (PUBLIC_PROCEDURES.has(procedure)) {
             const context: AuthContext = Object.freeze({
-                isAuthenticated: false
+                isAuthenticated: false,
             });
 
-            reqWithAuth.__auth = context;
+            metaReq.__auth = context;
+
+            logger.info({
+                requestId,
+                engine: "auth",
+                action: "AUTH_BYPASS",
+                message: "Public procedure access",
+                meta: { procedure },
+            });
+
             return next();
         }
 
-        /**
-         * TOKEN EXTRACTION (STRICT: HEADER ONLY)
-         */
-        console.log("HEADERS:", req.headers);
+        // ===============================
+        // TOKEN EXTRACTION (STRICT HEADER)
+        // ===============================
+        const token = extractToken(req.headers["authorization"]);
 
-        const rawHeader = req.headers["authorization"];
-        console.log("RAW AUTH HEADER:", rawHeader);
-
-        const token =
-            typeof rawHeader === "string" && rawHeader.startsWith("Bearer ")
-                ? rawHeader.replace("Bearer ", "")
-                : undefined;
-
-        console.log("FINAL TOKEN USED:", token);
-
-        if (typeof token !== "string" || token.trim() === "") {
-            console.log("ERROR: AUTH_ERROR (token missing)");
-            throw new Error("AUTH_ERROR");
+        if (!token) {
+            throw new Error("AUTH_TOKEN_MISSING");
         }
 
-        /**
-         * PROJECT RESOLUTION
-         */
+        // ===============================
+        // PROJECT RESOLUTION
+        // ===============================
         const project =
             requestBody?.project ??
             process.env.PROJECT;
 
-        console.log("PROJECT:", project);
-
         if (typeof project !== "string" || project.trim() === "") {
-            console.log("ERROR: INVALID_PROJECT");
             throw new Error("INVALID_PROJECT");
         }
 
-        /**
-         * DB SESSION VALIDATION
-         */
-        console.log("VALIDATING SESSION...");
-
+        // ===============================
+        // SESSION VALIDATION
+        // ===============================
         const identity = await validateSession(token, project);
 
-        console.log("SESSION VALID:", identity);
-
-        /**
-         * BUILD CONTEXT
-         */
+        // ===============================
+        // CONTEXT ATTACHMENT (IMMUTABLE)
+        // ===============================
         const context: AuthContext = Object.freeze({
             isAuthenticated: true,
-            identity
+            identity,
         });
 
-        reqWithAuth.__auth = context;
-        reqWithAuth.__token = token;
+        metaReq.__auth = context;
+        metaReq.__token = token;
 
-        console.log("AUTH CONTEXT ATTACHED");
-        console.log("---- AUTH MIDDLEWARE END ----");
+        logger.info({
+            requestId,
+            engine: "auth",
+            action: "AUTH_SUCCESS",
+            message: "Authentication successful",
+            meta: { procedure, project },
+        });
 
         next();
 
     } catch (err: unknown) {
-        console.log("AUTH MIDDLEWARE ERROR:", err);
+        logger.error({
+            requestId,
+            engine: "auth",
+            action: "AUTH_FAILURE",
+            message:
+                err instanceof Error ? err.message : "AUTH_ERROR",
+            meta: err,
+        });
+
         next(err);
     }
 }

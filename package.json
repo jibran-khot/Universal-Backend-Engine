@@ -1,35 +1,48 @@
 {
-  "name": "backend-engine",
+  "name": "universal-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Production-ready universal backend engine (SQL-driven, multi-project)",
+  "main": "dist/server.js",
+  "type": "commonjs",
   "scripts": {
-    "dev": "nodemon --watch src --exec ts-node src/server.ts",
+    "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "type-check": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "build:prod": "npm run clean && tsc",
+    "start:prod": "NODE_ENV=production node dist/server.js"
   },
-  "keywords": [],
+  "keywords": [
+    "nodejs",
+    "express",
+    "sql",
+    "backend-engine",
+    "multi-tenant"
+  ],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "description": "",
   "dependencies": {
     "@supabase/supabase-js": "^2.93.1",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
-    "mssql": "^12.2.0"
+    "mssql": "^12.2.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/helmet": "^0.0.48",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/mssql": "^9.1.9",
     "@types/node": "^25.0.10",
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.11",
+    "rimraf": "^5.0.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

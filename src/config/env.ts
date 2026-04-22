@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 
 // ===============================
-// LOAD ENV
+// LOAD BASE ENV
 // ===============================
 
 dotenv.config();
@@ -23,7 +23,7 @@ function assertString(value: unknown, name: string): string {
     if (typeof value !== "string" || value.trim() === "") {
         throw new Error(`ENV_ERROR: ${name} is required`);
     }
-    return value;
+    return value.trim();
 }
 
 function assertNumber(value: unknown, name: string): number {
@@ -40,41 +40,59 @@ function assertEnum<T extends string>(
     name: string
 ): T {
     if (typeof value !== "string" || !allowed.includes(value as T)) {
-        throw new Error(`ENV_ERROR: ${name} must be one of [${allowed.join(", ")}]`);
+        throw new Error(
+            `ENV_ERROR: ${name} must be one of [${allowed.join(", ")}]`
+        );
     }
     return value as T;
 }
 
 // ===============================
-// PROJECT RESOLUTION
+// PROJECT RESOLUTION (SAFE DEFAULT)
 // ===============================
 
+const rawProject = process.env.PROJECT || "ecom";
+
 const activeProject = assertEnum<ProjectType>(
-    process.env.PROJECT,
+    rawProject,
     ["ecom", "school"],
     "PROJECT"
 );
 
 // ===============================
-// LOAD PROJECT ENV
+// LOAD PROJECT ENV (OPTIONAL SAFE)
 // ===============================
 
 const projectEnvPath = path.join(process.cwd(), `.env.${activeProject}`);
 
 if (fs.existsSync(projectEnvPath)) {
     dotenv.config({ path: projectEnvPath });
-} else {
-    throw new Error(`ENV_ERROR: Project env not found: ${projectEnvPath}`);
 }
 
 // ===============================
-// EXPORT ENV (STRICT)
+// OPTIONAL HELPERS
+// ===============================
+
+function optionalNumber(value: unknown, fallback: number): number {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+}
+
+function optionalString(value: unknown, fallback: string): string {
+    if (typeof value === "string" && value.trim() !== "") {
+        return value.trim();
+    }
+    return fallback;
+}
+
+// ===============================
+// EXPORT ENV (STRICT + SAFE DEFAULTS)
 // ===============================
 
 export const ENV = Object.freeze({
     server: Object.freeze({
         env: process.env.NODE_ENV || "development",
-        port: assertNumber(process.env.PORT, "PORT"),
+        port: optionalNumber(process.env.PORT, 3000),
     }),
 
     project: activeProject,
@@ -88,8 +106,8 @@ export const ENV = Object.freeze({
 
         sqlserver: Object.freeze({
             host: assertString(process.env.DB_HOST, "DB_HOST"),
-            port: assertNumber(process.env.DB_PORT, "DB_PORT"),
-            instance: process.env.DB_INSTANCE || "",
+            port: optionalNumber(process.env.DB_PORT, 1433),
+            instance: optionalString(process.env.DB_INSTANCE, ""),
             name: assertString(process.env.DB_NAME, "DB_NAME"),
             user: assertString(process.env.DB_USER, "DB_USER"),
             password: assertString(process.env.DB_PASSWORD, "DB_PASSWORD"),
@@ -110,5 +128,10 @@ export const ENV = Object.freeze({
             process.env.DB_TENANT_DEFAULT,
             "DB_TENANT_DEFAULT"
         ),
+    }),
+
+    security: Object.freeze({
+        jwtSecret: assertString(process.env.JWT_SECRET, "JWT_SECRET"),
+        jwtExpiresIn: optionalString(process.env.JWT_EXPIRES_IN, "1d"),
     }),
 });
