@@ -131,26 +131,19 @@ app.use((_req: Request, res: Response) => {
             message: "Route not found",
         },
         error: {
-            code: "NOT_FOUND",
-            message: "Route not found",
+            code: "NOT_FOUND", message: "Route path not found",
         },
     });
 });
 
-// ===============================
-// GLOBAL ERROR HANDLER (STRICT)
-// ===============================
-
 app.use(
     (err: unknown, req: Request, res: Response, _next: NextFunction) => {
         const ctx = (req as RequestWithContext).__ctx;
-
         logger.error({
             requestId: ctx?.requestId,
             message: "UNHANDLED_ERROR",
             meta: err,
         });
-
         const response = handleError(err, req);
         res.status(response.statusCode || 500).json(response);
     }

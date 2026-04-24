@@ -66,3 +66,14 @@ export interface EngineRequest {
 
     payload?: Readonly<EnginePayload>;
 }
+export interface EngineRequestxd {
+    project?: string;
+
+    meta?: Readonly<RequestMeta>;
+
+    auth?: Readonly<RequestAuth>;
+
+    action: Readonly<RequestAction>;
+
+    payload?: Readonly<EnginePayload>;
+}
